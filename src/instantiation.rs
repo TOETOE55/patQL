@@ -53,6 +53,6 @@ pub(crate) fn instantiate(q: &Query, dict: &Dict) -> InstantiateResult<Query> {
             Box::new(instantiate(q, dict)?),
         ),
         Query::Negative(q) => instantiate(q, dict)?,
-        Query::Apply(d, f, p) => Query::Apply(d.clone(), *f, substitute(p, dict)?),
+        Query::Filter(d, f, p) => Query::Filter(d.clone(), *f, substitute(p, dict)?),
     })
 }

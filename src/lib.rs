@@ -1,3 +1,4 @@
+#![feature(test)]
 pub mod ast;
 pub mod evaluation;
 pub mod instantiation;

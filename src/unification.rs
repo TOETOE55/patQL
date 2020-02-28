@@ -2,7 +2,7 @@ use crate::ast::{Name, Pat};
 use crate::evaluation::Dict;
 use crate::unification::UnifyErr::{CannotUnify, CycleDependency};
 
-#[derive(Copy, Clone, Debug)]
+#[derive(Copy, Clone, Debug, Eq, PartialEq)]
 pub enum UnifyingPat<'a> {
     Num(&'a i64),
     Str(&'a str),
@@ -10,7 +10,7 @@ pub enum UnifyingPat<'a> {
     Slice(&'a [Pat], Option<&'a Name>),
 }
 
-#[derive(Clone, Copy, Debug)]
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
 pub enum UnifyErr<'a> {
     CannotUnify(UnifyingPat<'a>, UnifyingPat<'a>),
     CycleDependency(UnifyingPat<'a>, UnifyingPat<'a>),
@@ -100,5 +100,41 @@ pub fn depends_on(val: UnifyingPat, var: &str, dict: &Dict) -> bool {
                 })
         }
         _ => false,
+    }
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate test;
+    use super::*;
+    use crate::ast::{arr, num, slice, string, var};
+
+    #[test]
+    fn test_unify() {
+        // [?x, ?x..]
+        let p = slice(vec![var("x")], "x");
+        // [[?y, 2, 3], 1, ?z, 3]
+        let q = arr(vec![
+            arr(vec![var("y"), num(2), num(3)]),
+            num(1),
+            var("z"),
+            num(3),
+        ]);
+        let mut dict = Dict::default();
+        dict.unify(&p, &q).unwrap();
+        assert_eq!(dict.subst(&p).unwrap(), dict.subst(&q).unwrap())
+    }
+
+    #[test]
+    fn test_bad_unify() {
+        // [?x, ?x]
+        let p = arr(vec![var("x"), var("x")]);
+        // [?y, [a, ?y]]
+        let q = arr(vec![var("y"), arr(vec![string("a"), var("y")])]);
+        let mut dict = Dict::default();
+        match dict.unify(&p, &q).err().unwrap() {
+            CycleDependency(..) => {}
+            _ => panic!("wrong answer"),
+        }
     }
 }

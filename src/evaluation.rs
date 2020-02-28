@@ -6,7 +6,7 @@ use std::collections::HashMap;
 use std::iter::once;
 use std::slice::Iter;
 
-#[derive(Clone, Debug, Default)]
+#[derive(Clone, Debug, Default, Eq, PartialEq)]
 pub struct Dict<'a> {
     dict: HashMap<&'a str, UnifyingPat<'a>>,
 }
@@ -77,7 +77,7 @@ where
     match q {
         Query::True => Box::new(dicts),
         Query::Simple(p) => Box::new(apply_asserts(p, driver, dicts)),
-        Query::Conjoin(p, q) => qeval(p, driver, qeval(q, driver, dicts)),
+        Query::Conjoin(p, q) => qeval(q, driver, qeval(p, driver, dicts)),
         Query::Disjoint(p, q) => Box::new(dicts.flat_map(move |dict| {
             qeval(p, driver, once(dict.clone())).chain(qeval(q, driver, once(dict)))
         })),
@@ -89,7 +89,7 @@ where
                 None
             }
         })),
-        Query::Apply(_, f, p) => Box::new(dicts.filter(move |dict| {
+        Query::Filter(_, f, p) => Box::new(dicts.filter(move |dict| {
             if let Ok(p) = dict.subst(p) {
                 f(&p)
             } else {
@@ -118,4 +118,155 @@ where
             }
         })
     })
+}
+
+#[cfg(test)]
+mod tests {
+    extern crate test;
+
+    use super::*;
+    use crate::ast::*;
+
+    #[test]
+    fn test_eval1() {
+        let rule1 = arr(vec![string("append"), arr(vec![]), var("y"), var("y")]).assert_as(qtrue());
+        let rule2 = arr(vec![
+            string("append"),
+            slice(vec![var("u")], "v"),
+            var("y"),
+            slice(vec![var("u")], "z"),
+        ])
+        .assert_as(arr(vec![string("append"), var("v"), var("y"), var("z")]).q());
+
+        let db = AssertionDriver::new(vec![rule2, rule1]);
+        let qry1 = arr(vec![
+            string("append"),
+            var("x"),
+            var("y"),
+            arr(vec![num(1), num(2), num(3), num(4)]),
+        ])
+        .q();
+
+        let result = db.query(&qry1).collect::<Vec<_>>();
+
+        let ans1 = arr(vec![
+            string("append"),
+            arr(vec![]),
+            arr(vec![num(1), num(2), num(3), num(4)]),
+            arr(vec![num(1), num(2), num(3), num(4)]),
+        ])
+        .q();
+        let ans2 = arr(vec![
+            string("append"),
+            arr(vec![num(1)]),
+            arr(vec![num(2), num(3), num(4)]),
+            arr(vec![num(1), num(2), num(3), num(4)]),
+        ])
+        .q();
+        let ans3 = arr(vec![
+            string("append"),
+            arr(vec![num(1), num(2)]),
+            arr(vec![num(3), num(4)]),
+            arr(vec![num(1), num(2), num(3), num(4)]),
+        ])
+        .q();
+        let ans4 = arr(vec![
+            string("append"),
+            arr(vec![num(1), num(2), num(3)]),
+            arr(vec![num(4)]),
+            arr(vec![num(1), num(2), num(3), num(4)]),
+        ])
+        .q();
+        let ans5 = arr(vec![
+            string("append"),
+            arr(vec![num(1), num(2), num(3), num(4)]),
+            arr(vec![]),
+            arr(vec![num(1), num(2), num(3), num(4)]),
+        ])
+        .q();
+
+        assert!(!result
+            .iter()
+            .all(|x| format!("{}", x) != format!("{}", ans1)));
+        assert!(!result
+            .iter()
+            .all(|x| format!("{}", x) != format!("{}", ans2)));
+        assert!(!result
+            .iter()
+            .all(|x| format!("{}", x) != format!("{}", ans3)));
+        assert!(!result
+            .iter()
+            .all(|x| format!("{}", x) != format!("{}", ans4)));
+        assert!(!result
+            .iter()
+            .all(|x| format!("{}", x) != format!("{}", ans5)));
+    }
+
+    #[test]
+    fn test_eval2() {
+        let rule1 = arr(vec![string("append"), arr(vec![]), var("y"), var("y")]).assert_as(qtrue());
+        let rule2 = arr(vec![
+            string("append"),
+            slice(vec![var("u")], "v"),
+            var("y"),
+            slice(vec![var("u")], "z"),
+        ])
+        .assert_as(arr(vec![string("append"), var("v"), var("y"), var("z")]).q());
+
+        let db = AssertionDriver::new(vec![rule2, rule1]);
+        let qry1 = arr(vec![
+            string("append"),
+            arr(vec![num(1), num(2)]),
+            arr(vec![num(3), num(4)]),
+            var("x"),
+        ])
+        .q();
+
+        let result = db.query(&qry1).collect::<Vec<_>>();
+
+        let ans = arr(vec![
+            string("append"),
+            arr(vec![num(1), num(2)]),
+            arr(vec![num(3), num(4)]),
+            arr(vec![num(1), num(2), num(3), num(4)]),
+        ])
+        .q();
+
+        assert!(!result
+            .iter()
+            .all(|x| format!("{}", x) != format!("{}", ans)));
+    }
+
+    #[test]
+    fn test_eval3() {
+        let apple = arr(vec![string("apple"), num(3)]).datum();
+        let banana = arr(vec![string("banana"), num(4)]).datum();
+        let pear = arr(vec![string("pear"), num(5)]).datum();
+
+        let drive = AssertionDriver::new(vec![apple, banana, pear]);
+
+        fn greater(p: &Pat) -> bool {
+            match p {
+                Pat::Num(n) => *n > 3,
+                _ => false,
+            }
+        }
+
+        let q = arr(vec![var("fruits"), var("amount")]).q()
+            & var("amount").filter("(>3)", greater);
+
+        let result = drive.query(&q).collect::<Vec<_>>();
+
+        let ans1 = arr(vec![string("banana"), num(4)]).q()
+            & num(4).filter("(>3)", greater);
+        let ans2 = arr(vec![string("pear"), num(5)]).q()
+            & num(5).filter("(>3)", greater);
+
+        assert!(!result
+            .iter()
+            .all(|x| format!("{}", x) != format!("{}", ans1)));
+        assert!(!result
+            .iter()
+            .all(|x| format!("{}", x) != format!("{}", ans2)));
+    }
 }

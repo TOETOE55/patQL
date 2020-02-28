@@ -25,4 +25,27 @@ fn main() {
     for query in result {
         println!("{}", query);
     }
+
+    let apple = arr(vec![string("apple"), num(3)]).datum();
+    let banana = arr(vec![string("banana"), num(4)]).datum();
+    let pear = arr(vec![string("pear"), num(5)]).datum();
+
+    let drive = AssertionDriver::new(vec![apple, banana, pear]);
+
+    fn greater(p: &Pat) -> bool {
+        match p {
+            Pat::Num(n) => *n > 3,
+            _ => false,
+        }
+    }
+
+    let q = arr(vec![var("fruits"), var("amount")]).q()
+        & var("amount").filter("(>3)", greater);
+
+    println!(":> {}", q);
+    let result = drive.query(&q);
+    for query in result {
+        println!("{}", query);
+    }
+
 }

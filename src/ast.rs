@@ -5,7 +5,7 @@ use uuid::Uuid;
 
 pub type Name = String;
 
-#[derive(Clone, Debug)]
+#[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Pat {
     Num(i64),
     // 123
@@ -28,7 +28,7 @@ pub enum Query {
     // p || q
     Negative(Box<Self>),
     // ~p
-    Apply(String, fn(&Pat) -> bool, Pat), // (>100) ?x
+    Filter(String, fn(&Pat) -> bool, Pat), // (>100) ?x
 }
 
 #[derive(Clone)]
@@ -91,6 +91,10 @@ impl Pat {
         Query::Simple(self)
     }
 
+    pub fn filter(self, decr: &str, f: fn(&Pat) -> bool) -> Query {
+        Query::Filter(decr.to_string(), f, self)
+    }
+
     pub fn assert_as(self, q: Query) -> Assertion {
         Assertion {
             conclusion: self,
@@ -141,8 +145,16 @@ impl Query {
                 Query::Disjoint(Box::new(p.rename(id)), Box::new(q.rename(id)))
             }
             Query::Negative(q) => Query::Negative(Box::new(q.rename(id))),
-            Query::Apply(d, f, p) => Query::Apply(d.clone(), *f, p.rename(id)),
+            Query::Filter(d, f, p) => Query::Filter(d.clone(), *f, p.rename(id)),
         }
+    }
+
+    fn and(self, rhs: Self) -> Self {
+        self & rhs
+    }
+
+    fn or(self, rhs: Self) -> Self {
+        self | rhs
     }
 }
 
@@ -178,7 +190,7 @@ impl Display for Query {
             Query::Conjoin(p, q) => write!(f, "({} && {})", p, q),
             Query::Disjoint(p, q) => write!(f, "({} || {})", p, q),
             Query::Negative(n) => write!(f, "~{}", n),
-            Query::Apply(d, _, p) => write!(f, "({} {})", d, p),
+            Query::Filter(d, _, p) => write!(f, "({} {})", d, p),
         }
     }
 }

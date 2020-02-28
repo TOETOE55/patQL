@@ -1,4 +1,4 @@
-use crate::ast::{Name, Pat, Query};
+use crate::ast::{Pat, Query};
 use crate::qeval::Dict;
 use crate::unify::UnifyErr::{CannotUnify, CycleDependency, UnexpectedPattern, UnsolvedVariable};
 use std::rc::Rc;
@@ -8,23 +8,25 @@ pub fn unify(p: Rc<Pat>, q: Rc<Pat>, dict: &mut Dict) -> UnifyResult<()> {
     match (&*p, &*q) {
         (Num(m), Num(n)) if m == n => Ok(()),
         (Str(s1), Str(s2)) if s1 == s2 => Ok(()),
-        (Comp(ps, None), Comp(qs, None)) if ps.len() == qs.len() => {
+        (Arr(ps, None), Arr(qs, None)) if ps.len() == qs.len() => {
             for (p, q) in ps.iter().zip(qs) {
                 unify(p.clone(), q.clone(), dict)?;
             }
             Ok(())
         }
-        (Comp(ps, Some(v)), Comp(qs, s)) | (Comp(qs, s), Comp(ps, Some(v)))
-            if ps.len() <= qs.len() =>
-        {
+        (Arr(ps, Some(v)), Arr(qs, s)) | (Arr(qs, s), Arr(ps, Some(v))) if ps.len() <= qs.len() => {
             let (qs_prefix, qs_suffix) = qs.split_at(ps.len());
             for (p, q) in ps.iter().zip(qs_prefix) {
                 unify(p.clone(), q.clone(), dict)?;
             }
-            solve(Rc::new(Var(v.clone())), Rc::new(Comp(qs_suffix.to_vec(), s.clone())), dict)
-        },
-        (Var(_), _)  => solve(p, q, dict),
-        (_, Var(_))  => solve(q, p, dict),
+            solve(
+                Rc::new(Var(v.clone())),
+                Rc::new(Arr(qs_suffix.to_vec(), s.clone())),
+                dict,
+            )
+        }
+        (Var(_), _) => solve(p, q, dict),
+        (_, Var(_)) => solve(q, p, dict),
         _ => Err(CannotUnify((*p).clone(), (*q).clone())),
     }
 }
@@ -44,25 +46,25 @@ pub fn substitute(pat: &Pat, dict: &Dict) -> UnifyResult<Pat> {
         Pat::Num(n) => Ok(Pat::Num(*n)),
         Pat::Str(s) => Ok(Pat::Str(s.clone())),
         Pat::Var(v) => {
-            let p = dict.get(v).ok_or(UnsolvedVariable(v.clone()))?;
+            let p = dict.get(v).ok_or_else(|| UnsolvedVariable(v.clone()))?;
             substitute(&p, dict)
         }
-        Pat::Comp(ps, v) => {
+        Pat::Arr(ps, v) => {
             let mut collect = vec![];
             for p in ps {
                 collect.push(Rc::new(substitute(p, dict)?));
             }
 
             if let Some(v) = v {
-                let p = dict.get(v).ok_or(UnsolvedVariable(v.clone()))?;
+                let p = dict.get(v).ok_or_else(|| UnsolvedVariable(v.clone()))?;
                 match substitute(&p, dict)? {
-                    Pat::Comp(mut ps, None) => collect.append(&mut ps),
-                    Pat::Comp(_, Some(v)) => return Err(UnsolvedVariable(v)),
-                    p => return Err(UnexpectedPattern(p.clone())),
+                    Pat::Arr(mut ps, None) => collect.append(&mut ps),
+                    Pat::Arr(_, Some(v)) => return Err(UnsolvedVariable(v)),
+                    p => return Err(UnexpectedPattern(p)),
                 }
             }
 
-            Ok(Pat::Comp(collect, None))
+            Ok(Pat::Arr(collect, None))
         }
     }
 }
@@ -110,15 +112,15 @@ fn solve(var: Rc<Pat>, val: Rc<Pat>, dict: &mut Dict) -> UnifyResult<()> {
         return Err(CycleDependency((*var).clone(), (*val).clone()));
     }
 
-    dict.insert(name.clone(), val.clone());
+    dict.insert(name.clone(), val);
     Ok(())
 }
 
-pub fn depends_on(val: &Pat, var: &Name, dict: &Dict) -> bool {
+pub fn depends_on(val: &Pat, var: &str, dict: &Dict) -> bool {
     use Pat::*;
     match val {
         Var(v) => v == var || !dict.get(v).into_iter().all(|p| !depends_on(&p, var, dict)),
-        Comp(pats, slice) => {
+        Arr(pats, slice) => {
             !pats.iter().all(|p| !depends_on(p, var, dict))
                 || slice.as_ref().map_or(false, |v| {
                     v == var || !dict.get(v).into_iter().all(|p| !depends_on(&p, var, dict))

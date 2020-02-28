@@ -1,16 +1,16 @@
 use std::fmt::{Display, Error, Formatter};
 use std::ops::{BitAnd, BitOr, Not};
-use uuid::Uuid;
 use std::rc::Rc;
+use uuid::Uuid;
 
 pub type Name = String;
 
 #[derive(Clone, Eq, PartialEq, Debug)]
 pub enum Pat {
-    Num(i64),                     // 123
-    Str(String),                  // "string"
-    Var(Name),                    // ?x
-    Comp(Vec<Rc<Pat>>, Option<Name>), // [prefix, ?x..]
+    Num(i64),                        // 123
+    Str(String),                     // "string"
+    Var(Name),                       // ?x
+    Arr(Vec<Rc<Pat>>, Option<Name>), // [prefix, ?x..]
 }
 
 /**
@@ -50,14 +50,14 @@ pub fn num(n: i64) -> Pat {
     Num(n)
 }
 
-pub fn comp(ps: Vec<Pat>) -> Pat {
+pub fn arr(ps: Vec<Pat>) -> Pat {
     use Pat::*;
-    Comp(ps.into_iter().map(Rc::new).collect(), None)
+    Arr(ps.into_iter().map(Rc::new).collect(), None)
 }
 
-pub fn comp_rest(ps: Vec<Pat>, v: &str) -> Pat {
+pub fn slice(ps: Vec<Pat>, v: &str) -> Pat {
     use Pat::*;
-    Comp(ps.into_iter().map(Rc::new).collect(), Some(v.to_string()))
+    Arr(ps.into_iter().map(Rc::new).collect(), Some(v.to_string()))
 }
 
 impl Display for Pat {
@@ -66,7 +66,7 @@ impl Display for Pat {
             Pat::Num(n) => write!(f, "{}", n),
             Pat::Str(s) => write!(f, "\"{}\"", s),
             Pat::Var(v) => write!(f, "?{}", v),
-            Pat::Comp(ps, None) => {
+            Pat::Arr(ps, None) => {
                 f.write_str("[")?;
                 if ps.is_empty() {
                     return f.write_str("]");
@@ -77,7 +77,7 @@ impl Display for Pat {
                 }
                 write!(f, "{}]", ps.last().unwrap())
             }
-            Pat::Comp(ps, Some(v)) => {
+            Pat::Arr(ps, Some(v)) => {
                 f.write_str("[")?;
                 for p in ps {
                     write!(f, "{}, ", p)?;
@@ -129,10 +129,6 @@ impl Query {
     pub fn or(self, rhs: Self) -> Self {
         self | rhs
     }
-
-    pub fn not(self) -> Self {
-        !self
-    }
 }
 
 pub fn qtrue() -> Query {
@@ -162,7 +158,7 @@ impl Assertion {
         fn walk_pat(x: &Pat, id: &str) -> Pat {
             match x {
                 Pat::Var(v) => Pat::Var(v.clone() + id),
-                Pat::Comp(ps, s) => Pat::Comp(
+                Pat::Arr(ps, s) => Pat::Arr(
                     ps.iter().map(|p| walk_pat(p, id)).map(Rc::new).collect(),
                     s.clone().map(|v| v + id),
                 ),

@@ -1,4 +1,4 @@
-use crate::ast::{Assertion, Name, Pat, Query};
+use crate::ast::{Assertion, Pat, Query};
 use crate::unify::{instantiate, substitute, unify, UnifyResult};
 use std::collections::{HashMap, VecDeque};
 use std::rc::Rc;
@@ -21,11 +21,11 @@ impl Dict {
         instantiate(q, self)
     }
 
-    pub fn get(&self, name: &Name) -> Option<Rc<Pat>> {
+    pub fn get(&self, name: &str) -> Option<Rc<Pat>> {
         self.dict.get(name).cloned()
     }
 
-    pub fn remove(&mut self, name: &Name) -> Option<Rc<Pat>> {
+    pub fn remove(&mut self, name: &str) -> Option<Rc<Pat>> {
         self.dict.remove(name)
     }
 
@@ -89,7 +89,7 @@ impl DictStream {
     }
 }
 
-pub fn run_query<'a>(q: &Query, db: &[Assertion]) -> Vec<Query> {
+pub fn run_query(q: &Query, db: &[Assertion]) -> Vec<Query> {
     let mut inputs = DictStream::default();
     let mut outputs = DictStream::empty();
     query(q, db, &mut inputs, &mut outputs);
@@ -134,12 +134,7 @@ fn apply_asst(pat: &Pat, assts: &[Assertion], inputs: &mut DictStream, outputs: 
         for dict in inputs.buf.iter() {
             let mut dict = dict.clone();
             if let Ok(()) = dict.unify(Rc::new(pat.clone()), Rc::new(renamed.conclusion.clone())) {
-                query(
-                    &renamed.body,
-                    assts,
-                    &mut DictStream::single(dict.clone()),
-                    outputs,
-                );
+                query(&renamed.body, assts, &mut DictStream::single(dict), outputs);
             }
         }
     }

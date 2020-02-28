@@ -1,38 +1,40 @@
+use crate::unification::UnifyingPat;
 use std::fmt::{Display, Error, Formatter};
 use std::ops::{BitAnd, BitOr, Not};
-use std::rc::Rc;
 use uuid::Uuid;
 
 pub type Name = String;
 
-#[derive(Clone, Eq, PartialEq, Debug)]
+#[derive(Clone, Debug)]
 pub enum Pat {
-    Num(i64),                        // 123
-    Str(String),                     // "string"
-    Var(Name),                       // ?x
-    Arr(Vec<Rc<Pat>>, Option<Name>), // [prefix, ?x..]
+    Num(i64),
+    // 123
+    Str(String),
+    // "string"
+    Var(Name),
+    // ?x
+    Arr(Vec<Pat>, Option<Name>), // [prefix, ?x..]
 }
 
-/**
- [?x, ?x..] ~ [[1,2,3], 1, 2, 3]
- x : [1,2,3]
-*/
+#[derive(Clone)]
+pub enum Query {
+    True,
+    // true
+    Simple(Pat),
+    // [a, ?x, b]
+    Conjoin(Box<Self>, Box<Self>),
+    // p && q
+    Disjoint(Box<Self>, Box<Self>),
+    // p || q
+    Negative(Box<Self>),
+    // ~p
+    Apply(String, fn(&Pat) -> bool, Pat), // (>100) ?x
+}
 
-impl Pat {
-    pub fn q(self) -> Query {
-        Query::Simple(self)
-    }
-
-    pub fn assert_as(self, q: Query) -> Assertion {
-        Assertion {
-            conclusion: self,
-            body: q,
-        }
-    }
-
-    pub fn datum(self) -> Assertion {
-        self.assert_as(qtrue())
-    }
+#[derive(Clone)]
+pub struct Assertion {
+    pub conclusion: Pat,
+    pub body: Query,
 }
 
 pub fn var(v: &str) -> Pat {
@@ -52,12 +54,53 @@ pub fn num(n: i64) -> Pat {
 
 pub fn arr(ps: Vec<Pat>) -> Pat {
     use Pat::*;
-    Arr(ps.into_iter().map(Rc::new).collect(), None)
+    Arr(ps, None)
 }
 
 pub fn slice(ps: Vec<Pat>, v: &str) -> Pat {
     use Pat::*;
-    Arr(ps.into_iter().map(Rc::new).collect(), Some(v.to_string()))
+    Arr(ps, Some(v.to_string()))
+}
+
+pub fn qtrue() -> Query {
+    Query::True
+}
+
+impl Pat {
+    pub(crate) fn to_unify(&self) -> UnifyingPat {
+        match self {
+            Pat::Num(n) => UnifyingPat::Num(n),
+            Pat::Str(s) => UnifyingPat::Str(s),
+            Pat::Var(v) => UnifyingPat::Var(v),
+            Pat::Arr(arr, v) => UnifyingPat::Slice(arr, v.as_ref()),
+        }
+    }
+
+    pub(crate) fn rename(&self, id: &str) -> Self {
+        match self {
+            Pat::Var(v) => Pat::Var(v.clone() + id),
+            Pat::Arr(ps, v) => Pat::Arr(
+                ps.iter().map(|p| p.rename(id)).collect(),
+                v.clone().map(|v| v + id),
+            ),
+            pat => pat.clone(),
+        }
+    }
+
+    pub fn q(self) -> Query {
+        Query::Simple(self)
+    }
+
+    pub fn assert_as(self, q: Query) -> Assertion {
+        Assertion {
+            conclusion: self,
+            body: q,
+        }
+    }
+
+    pub fn datum(self) -> Assertion {
+        self.assert_as(qtrue())
+    }
 }
 
 impl Display for Pat {
@@ -88,13 +131,19 @@ impl Display for Pat {
     }
 }
 
-#[derive(Clone, Debug)]
-pub enum Query {
-    True,
-    Simple(Pat),
-    Conjoin(Box<Self>, Box<Self>),
-    Disjoint(Box<Self>, Box<Self>),
-    Negative(Box<Self>),
+impl Query {
+    fn rename(&self, id: &str) -> Self {
+        match self {
+            Query::True => Query::True,
+            Query::Simple(p) => Query::Simple(p.rename(id)),
+            Query::Conjoin(p, q) => Query::Conjoin(Box::new(p.rename(id)), Box::new(q.rename(id))),
+            Query::Disjoint(p, q) => {
+                Query::Disjoint(Box::new(p.rename(id)), Box::new(q.rename(id)))
+            }
+            Query::Negative(q) => Query::Negative(Box::new(q.rename(id))),
+            Query::Apply(d, f, p) => Query::Apply(d.clone(), *f, p.rename(id)),
+        }
+    }
 }
 
 impl Not for Query {
@@ -121,20 +170,6 @@ impl BitOr for Query {
     }
 }
 
-impl Query {
-    pub fn and(self, rhs: Self) -> Self {
-        self & rhs
-    }
-
-    pub fn or(self, rhs: Self) -> Self {
-        self | rhs
-    }
-}
-
-pub fn qtrue() -> Query {
-    Query::True
-}
-
 impl Display for Query {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         match self {
@@ -143,57 +178,17 @@ impl Display for Query {
             Query::Conjoin(p, q) => write!(f, "({} && {})", p, q),
             Query::Disjoint(p, q) => write!(f, "({} || {})", p, q),
             Query::Negative(n) => write!(f, "~{}", n),
+            Query::Apply(d, _, p) => write!(f, "({} {})", d, p),
         }
     }
 }
 
-#[derive(Clone, Debug)]
-pub struct Assertion {
-    pub conclusion: Pat,
-    pub body: Query,
-}
-
 impl Assertion {
     pub fn rename(&self) -> Self {
-        fn walk_pat(x: &Pat, id: &str) -> Pat {
-            match x {
-                Pat::Var(v) => Pat::Var(v.clone() + id),
-                Pat::Arr(ps, s) => Pat::Arr(
-                    ps.iter().map(|p| walk_pat(p, id)).map(Rc::new).collect(),
-                    s.clone().map(|v| v + id),
-                ),
-                pat => pat.clone(),
-            }
+        let id = Uuid::new_v4().to_string();
+        Self {
+            conclusion: self.conclusion.rename(&id),
+            body: self.body.rename(&id),
         }
-
-        fn walk_query(x: &Query, id: &str) -> Query {
-            match x {
-                Query::True => Query::True,
-                Query::Simple(pat) => Query::Simple(walk_pat(pat, id)),
-                Query::Conjoin(p, q) => {
-                    Query::Conjoin(Box::new(walk_query(p, id)), Box::new(walk_query(q, id)))
-                }
-                Query::Disjoint(p, q) => {
-                    Query::Disjoint(Box::new(walk_query(p, id)), Box::new(walk_query(q, id)))
-                }
-                Query::Negative(q) => Query::Negative(Box::new(walk_query(q, id))),
-            }
-        }
-
-        fn walk(
-            Assertion {
-                conclusion: conclude,
-                body,
-            }: &Assertion,
-            id: &str,
-        ) -> Assertion {
-            Assertion {
-                conclusion: walk_pat(conclude, id),
-                body: walk_query(body, id),
-            }
-        }
-
-        let uid = Uuid::new_v4().to_string();
-        walk(self, &uid)
     }
 }

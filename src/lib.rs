@@ -1,5 +1,6 @@
 pub mod ast;
-pub mod qeval;
-pub mod unify;
+pub mod evaluation;
+pub mod instantiation;
+pub mod unification;
 
 pub mod exp;

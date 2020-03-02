@@ -1,5 +1,5 @@
 use crate::unification::UnifyingPat;
-use std::fmt::{Display, Error, Formatter};
+use std::fmt::{Display, Error, Formatter, Debug};
 use std::ops::{BitAnd, BitOr, Not};
 use uuid::Uuid;
 
@@ -7,34 +7,47 @@ pub type Name = String;
 
 #[derive(Clone, Debug, Eq, PartialEq)]
 pub enum Pat {
-    Num(i64),
     // 123
-    Str(String),
+    Num(i64),
     // "string"
-    Var(Name),
+    Str(String),
     // ?x
-    Arr(Vec<Pat>, Option<Name>), // [prefix, ?x..]
+    Var(Name),
+    // [prefix, ...?x]
+    Arr(Vec<Pat>, Option<Name>),
+    // ?x + ?y * 2
+    Eval(Op, Vec<Pat>),
+}
+
+#[derive(Clone, Copy, Debug, Eq, PartialEq)]
+pub enum Op {
+    Plus,
+    Minus,
+    Mult,
+    Divi,
+    Append,
 }
 
 #[derive(Clone)]
-pub enum Query {
-    True,
-    // true
-    Simple(Pat),
+pub enum Term {
+    // success
+    Unit,
     // [a, ?x, b]
-    Conjoin(Box<Self>, Box<Self>),
+    Simple(Pat),
     // p && q
-    Disjoint(Box<Self>, Box<Self>),
+    Conjoin(Box<Self>, Box<Self>),
     // p || q
-    Negative(Box<Self>),
+    Disjoint(Box<Self>, Box<Self>),
     // ~p
-    Filter(String, fn(&Pat) -> bool, Pat), // (>100) ?x
+    Negative(Box<Self>),
+    // (>100) ?x
+    Filter(String, fn(&Pat) -> bool, Pat),
 }
 
-#[derive(Clone)]
-pub struct Assertion {
-    pub conclusion: Pat,
-    pub body: Query,
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub struct Decl {
+    pub pat: Pat,
+    pub expanded: Term,
 }
 
 pub fn var(v: &str) -> Pat {
@@ -62,8 +75,8 @@ pub fn slice(ps: Vec<Pat>, v: &str) -> Pat {
     Arr(ps, Some(v.to_string()))
 }
 
-pub fn qtrue() -> Query {
-    Query::True
+pub fn unit() -> Term {
+    Term::Unit
 }
 
 impl Pat {
@@ -73,6 +86,7 @@ impl Pat {
             Pat::Str(s) => UnifyingPat::Str(s),
             Pat::Var(v) => UnifyingPat::Var(v),
             Pat::Arr(arr, v) => UnifyingPat::Slice(arr, v.as_ref()),
+            Pat::Eval(_, _) => unimplemented!(),
         }
     }
 
@@ -87,23 +101,23 @@ impl Pat {
         }
     }
 
-    pub fn q(self) -> Query {
-        Query::Simple(self)
+    pub fn q(self) -> Term {
+        Term::Simple(self)
     }
 
-    pub fn filter(self, decr: &str, f: fn(&Pat) -> bool) -> Query {
-        Query::Filter(decr.to_string(), f, self)
+    pub fn filter(self, decr: &str, f: fn(&Pat) -> bool) -> Term {
+        Term::Filter(decr.to_string(), f, self)
     }
 
-    pub fn assert_as(self, q: Query) -> Assertion {
-        Assertion {
-            conclusion: self,
-            body: q,
+    pub fn expend_to(self, q: Term) -> Decl {
+        Decl {
+            pat: self,
+            expanded: q,
         }
     }
 
-    pub fn datum(self) -> Assertion {
-        self.assert_as(qtrue())
+    pub fn datum(self) -> Decl {
+        self.expend_to(unit())
     }
 }
 
@@ -129,23 +143,26 @@ impl Display for Pat {
                 for p in ps {
                     write!(f, "{}, ", p)?;
                 }
-                write!(f, "?{}...]", v)
+                write!(f, "...?{}]", v)
             }
+            Pat::Eval(_, _) => unimplemented!(),
         }
     }
 }
 
-impl Query {
+impl Term {
     fn rename(&self, id: &str) -> Self {
         match self {
-            Query::True => Query::True,
-            Query::Simple(p) => Query::Simple(p.rename(id)),
-            Query::Conjoin(p, q) => Query::Conjoin(Box::new(p.rename(id)), Box::new(q.rename(id))),
-            Query::Disjoint(p, q) => {
-                Query::Disjoint(Box::new(p.rename(id)), Box::new(q.rename(id)))
+            Term::Unit => Term::Unit,
+            Term::Simple(p) => Term::Simple(p.rename(id)),
+            Term::Conjoin(p, q) => {
+                Term::Conjoin(Box::new(p.rename(id)), Box::new(q.rename(id)))
             }
-            Query::Negative(q) => Query::Negative(Box::new(q.rename(id))),
-            Query::Filter(d, f, p) => Query::Filter(d.clone(), *f, p.rename(id)),
+            Term::Disjoint(p, q) => {
+                Term::Disjoint(Box::new(p.rename(id)), Box::new(q.rename(id)))
+            }
+            Term::Negative(q) => Term::Negative(Box::new(q.rename(id))),
+            Term::Filter(d, f, p) => Term::Filter(d.clone(), *f, p.rename(id)),
         }
     }
 
@@ -158,7 +175,7 @@ impl Query {
     }
 }
 
-impl Not for Query {
+impl Not for Term {
     type Output = Self;
 
     fn not(self) -> Self::Output {
@@ -166,7 +183,7 @@ impl Not for Query {
     }
 }
 
-impl BitAnd for Query {
+impl BitAnd for Term {
     type Output = Self;
 
     fn bitand(self, rhs: Self) -> Self::Output {
@@ -174,7 +191,7 @@ impl BitAnd for Query {
     }
 }
 
-impl BitOr for Query {
+impl BitOr for Term {
     type Output = Self;
 
     fn bitor(self, rhs: Self) -> Self::Output {
@@ -182,25 +199,55 @@ impl BitOr for Query {
     }
 }
 
-impl Display for Query {
+impl Display for Term {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         match self {
-            Query::True => f.write_str("true"),
-            Query::Simple(p) => write!(f, "{}", p),
-            Query::Conjoin(p, q) => write!(f, "({} && {})", p, q),
-            Query::Disjoint(p, q) => write!(f, "({} || {})", p, q),
-            Query::Negative(n) => write!(f, "~{}", n),
-            Query::Filter(d, _, p) => write!(f, "({} {})", d, p),
+            Term::Unit => f.write_str("true"),
+            Term::Simple(p) => write!(f, "{}", p),
+            Term::Conjoin(p, q) => write!(f, "({} & {})", p, q),
+            Term::Disjoint(p, q) => write!(f, "({} | {})", p, q),
+            Term::Negative(n) => write!(f, "~{}", n),
+            Term::Filter(d, _, p) => write!(f, "({} {})", d, p),
         }
     }
 }
 
-impl Assertion {
+impl Debug for Term {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
+        write!(f, "{}", self)
+    }
+}
+
+impl PartialEq for Term {
+    fn eq(&self, other: &Self) -> bool {
+        match (self, other) {
+            (Term::Unit, Term::Unit) => true,
+            (Term::Simple(p), Term::Simple(q)) => p.eq(q),
+            (Term::Conjoin(p1,q1), Term::Conjoin(p2,q2)) |
+            (Term::Disjoint(p1,q1), Term::Disjoint(p2,q2)) => p1.eq(p2) && q1.eq(q2),
+            (Term::Negative(n), Term::Negative(m)) => n.eq(m),
+            _ => false,
+        }
+    }
+}
+
+impl Eq for Term {
+
+}
+
+impl Decl {
     pub fn rename(&self) -> Self {
         let id = Uuid::new_v4().to_string();
         Self {
-            conclusion: self.conclusion.rename(&id),
-            body: self.body.rename(&id),
+            pat: self.pat.rename(&id),
+            expanded: self.expanded.rename(&id),
+        }
+    }
+
+    pub fn new(pat: Pat, body: Term) -> Self {
+        Self {
+            pat,
+            expanded: body
         }
     }
 }

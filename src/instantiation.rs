@@ -1,4 +1,4 @@
-use crate::ast::{Name, Pat, Query};
+use crate::ast::{Term, Name, Pat};
 use crate::evaluation::Dict;
 use crate::instantiation::InstantiateErr::{UnexpectedPattern, UnsolvedVariable};
 
@@ -40,19 +40,19 @@ pub(crate) fn substitute(pat: &Pat, dict: &Dict) -> InstantiateResult<Pat> {
     })
 }
 
-pub(crate) fn instantiate(q: &Query, dict: &Dict) -> InstantiateResult<Query> {
+pub(crate) fn instantiate(q: &Term, dict: &Dict) -> InstantiateResult<Term> {
     Ok(match q {
-        Query::True => Query::True,
-        Query::Simple(p) => Query::Simple(substitute(p, dict)?),
-        Query::Conjoin(p, q) => Query::Conjoin(
+        Term::Unit => Term::Unit,
+        Term::Simple(p) => Term::Simple(substitute(p, dict)?),
+        Term::Conjoin(p, q) => Term::Conjoin(
             Box::new(instantiate(p, dict)?),
             Box::new(instantiate(q, dict)?),
         ),
-        Query::Disjoint(p, q) => Query::Disjoint(
+        Term::Disjoint(p, q) => Term::Disjoint(
             Box::new(instantiate(p, dict)?),
             Box::new(instantiate(q, dict)?),
         ),
-        Query::Negative(q) => instantiate(q, dict)?,
-        Query::Filter(d, f, p) => Query::Filter(d.clone(), *f, substitute(p, dict)?),
+        Term::Negative(q) => instantiate(q, dict)?,
+        Term::Filter(d, f, p) => Term::Filter(d.clone(), *f, substitute(p, dict)?),
     })
 }

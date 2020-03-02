@@ -1,4 +1,4 @@
-use crate::ast::{Assertion, Pat, Query};
+use crate::ast::{Term, Decl, Pat};
 use crate::instantiation::{instantiate, substitute, InstantiateResult};
 use crate::unification::{unify, UnifyResult, UnifyingPat};
 use bumpalo::Bump;
@@ -11,8 +11,8 @@ pub struct Dict<'a> {
     dict: HashMap<&'a str, UnifyingPat<'a>>,
 }
 
-pub struct AssertionDriver {
-    assertions: Vec<Assertion>,
+pub struct Driver {
+    definitions: Vec<Decl>,
     arena: Bump,
 }
 
@@ -33,55 +33,55 @@ impl<'a> Dict<'a> {
         substitute(pat, self)
     }
 
-    pub fn inst(&self, q: &Query) -> InstantiateResult<Query> {
+    pub fn inst(&self, q: &Term) -> InstantiateResult<Term> {
         instantiate(q, self)
     }
 }
 
-impl AssertionDriver {
-    pub fn new(assertions: Vec<Assertion>) -> Self {
+impl Driver {
+    pub fn new(definitions: Vec<Decl>) -> Self {
         Self {
-            assertions,
+            definitions,
             arena: Default::default(),
         }
     }
 
-    pub fn connect(&self) -> Iter<Assertion> {
-        self.assertions.iter()
+    pub fn connect(&self) -> Iter<Decl> {
+        self.definitions.iter()
     }
 
-    pub fn renamer(&self, assert: &Assertion) -> &Assertion {
+    pub fn renamer(&self, assert: &Decl) -> &Decl {
         self.arena.alloc(assert.rename())
     }
 
-    pub fn query<'a>(&'a self, q: &'a Query) -> impl Iterator<Item = Query> + 'a {
+    pub fn query<'a>(&'a self, q: &'a Term) -> impl Iterator<Item =Term> + 'a {
         run_query(q, self)
     }
 }
 
 pub(crate) fn run_query<'a>(
-    q: &'a Query,
-    driver: &'a AssertionDriver,
-) -> impl Iterator<Item = Query> + 'a {
+    q: &'a Term,
+    driver: &'a Driver,
+) -> impl Iterator<Item =Term> + 'a {
     qeval(q, driver, once(Dict::default())).flat_map(move |dict| dict.inst(q))
 }
 
 pub(crate) fn qeval<'a, I>(
-    q: &'a Query,
-    driver: &'a AssertionDriver,
+    q: &'a Term,
+    driver: &'a Driver,
     dicts: I,
 ) -> Box<dyn Iterator<Item = Dict<'a>> + 'a>
 where
     I: Iterator<Item = Dict<'a>> + 'a,
 {
     match q {
-        Query::True => Box::new(dicts),
-        Query::Simple(p) => Box::new(apply_asserts(p, driver, dicts)),
-        Query::Conjoin(p, q) => qeval(q, driver, qeval(p, driver, dicts)),
-        Query::Disjoint(p, q) => Box::new(dicts.flat_map(move |dict| {
+        Term::Unit => Box::new(dicts),
+        Term::Simple(p) => Box::new(apply_asserts(p, driver, dicts)),
+        Term::Conjoin(p, q) => qeval(q, driver, qeval(p, driver, dicts)),
+        Term::Disjoint(p, q) => Box::new(dicts.flat_map(move |dict| {
             qeval(p, driver, once(dict.clone())).chain(qeval(q, driver, once(dict)))
         })),
-        Query::Negative(p) => Box::new(dicts.flat_map(move |dict| {
+        Term::Negative(p) => Box::new(dicts.flat_map(move |dict| {
             let v = qeval(p, driver, once(dict.clone())).collect::<Vec<_>>();
             if v.is_empty() {
                 Some(dict)
@@ -89,7 +89,7 @@ where
                 None
             }
         })),
-        Query::Filter(_, f, p) => Box::new(dicts.filter(move |dict| {
+        Term::Filter(_, f, p) => Box::new(dicts.filter(move |dict| {
             if let Ok(p) = dict.subst(p) {
                 f(&p)
             } else {
@@ -101,18 +101,18 @@ where
 
 fn apply_asserts<'a, I>(
     pat: &'a Pat,
-    driver: &'a AssertionDriver,
+    driver: &'a Driver,
     dicts: I,
 ) -> impl Iterator<Item = Dict<'a>> + 'a
 where
     I: Iterator<Item = Dict<'a>> + 'a,
 {
     dicts.flat_map(move |dict| {
-        driver.connect().flat_map(move |asst| {
+        driver.connect().flat_map(move |def| {
             let mut dict = dict.clone();
-            let renamed = driver.renamer(asst);
-            if let Ok(()) = dict.unify(pat, &renamed.conclusion) {
-                qeval(&renamed.body, driver, once(dict))
+            let renamed = driver.renamer(def);
+            if let Ok(()) = dict.unify(pat, &renamed.pat) {
+                qeval(&renamed.expanded, driver, once(dict))
             } else {
                 Box::new(None.into_iter())
             }
@@ -129,16 +129,17 @@ mod tests {
 
     #[test]
     fn test_eval1() {
-        let rule1 = arr(vec![string("append"), arr(vec![]), var("y"), var("y")]).assert_as(qtrue());
+        let rule1 =
+            arr(vec![string("append"), arr(vec![]), var("y"), var("y")]).expend_to(unit());
         let rule2 = arr(vec![
             string("append"),
             slice(vec![var("u")], "v"),
             var("y"),
             slice(vec![var("u")], "z"),
         ])
-        .assert_as(arr(vec![string("append"), var("v"), var("y"), var("z")]).q());
+        .expend_to(arr(vec![string("append"), var("v"), var("y"), var("z")]).q());
 
-        let db = AssertionDriver::new(vec![rule2, rule1]);
+        let db = Driver::new(vec![rule2, rule1]);
         let qry1 = arr(vec![
             string("append"),
             var("x"),
@@ -204,16 +205,17 @@ mod tests {
 
     #[test]
     fn test_eval2() {
-        let rule1 = arr(vec![string("append"), arr(vec![]), var("y"), var("y")]).assert_as(qtrue());
+        let rule1 =
+            arr(vec![string("append"), arr(vec![]), var("y"), var("y")]).expend_to(unit());
         let rule2 = arr(vec![
             string("append"),
             slice(vec![var("u")], "v"),
             var("y"),
             slice(vec![var("u")], "z"),
         ])
-        .assert_as(arr(vec![string("append"), var("v"), var("y"), var("z")]).q());
+        .expend_to(arr(vec![string("append"), var("v"), var("y"), var("z")]).q());
 
-        let db = AssertionDriver::new(vec![rule2, rule1]);
+        let db = Driver::new(vec![rule2, rule1]);
         let qry1 = arr(vec![
             string("append"),
             arr(vec![num(1), num(2)]),
@@ -243,7 +245,7 @@ mod tests {
         let banana = arr(vec![string("banana"), num(4)]).datum();
         let pear = arr(vec![string("pear"), num(5)]).datum();
 
-        let drive = AssertionDriver::new(vec![apple, banana, pear]);
+        let drive = Driver::new(vec![apple, banana, pear]);
 
         fn greater(p: &Pat) -> bool {
             match p {
@@ -252,15 +254,12 @@ mod tests {
             }
         }
 
-        let q = arr(vec![var("fruits"), var("amount")]).q()
-            & var("amount").filter("(>3)", greater);
+        let q = arr(vec![var("fruits"), var("amount")]).q() & var("amount").filter("(>3)", greater);
 
         let result = drive.query(&q).collect::<Vec<_>>();
 
-        let ans1 = arr(vec![string("banana"), num(4)]).q()
-            & num(4).filter("(>3)", greater);
-        let ans2 = arr(vec![string("pear"), num(5)]).q()
-            & num(5).filter("(>3)", greater);
+        let ans1 = arr(vec![string("banana"), num(4)]).q() & num(4).filter("(>3)", greater);
+        let ans2 = arr(vec![string("pear"), num(5)]).q() & num(5).filter("(>3)", greater);
 
         assert!(!result
             .iter()

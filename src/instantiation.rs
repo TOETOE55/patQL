@@ -1,4 +1,4 @@
-use crate::ast::{Term, Name, Pat};
+use crate::ast::{Name, Pat, Term};
 use crate::evaluation::Dict;
 use crate::instantiation::InstantiateErr::{UnexpectedPattern, UnsolvedVariable};
 

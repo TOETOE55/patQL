@@ -1,4 +1,4 @@
-use crate::ast::{Term, Decl, Pat};
+use crate::ast::{Decl, Pat, Term};
 use crate::instantiation::{instantiate, substitute, InstantiateResult};
 use crate::unification::{unify, UnifyResult, UnifyingPat};
 use bumpalo::Bump;
@@ -12,7 +12,7 @@ pub struct Dict<'a> {
 }
 
 pub struct Driver {
-    definitions: Vec<Decl>,
+    decls: Vec<Decl>,
     arena: Bump,
 }
 
@@ -39,30 +39,27 @@ impl<'a> Dict<'a> {
 }
 
 impl Driver {
-    pub fn new(definitions: Vec<Decl>) -> Self {
+    pub fn new(decls: Vec<Decl>) -> Self {
         Self {
-            definitions,
+            decls,
             arena: Default::default(),
         }
     }
 
     pub fn connect(&self) -> Iter<Decl> {
-        self.definitions.iter()
+        self.decls.iter()
     }
 
     pub fn renamer(&self, assert: &Decl) -> &Decl {
         self.arena.alloc(assert.rename())
     }
 
-    pub fn query<'a>(&'a self, q: &'a Term) -> impl Iterator<Item =Term> + 'a {
+    pub fn query<'a>(&'a self, q: &'a Term) -> impl Iterator<Item = Term> + 'a {
         run_query(q, self)
     }
 }
 
-pub(crate) fn run_query<'a>(
-    q: &'a Term,
-    driver: &'a Driver,
-) -> impl Iterator<Item =Term> + 'a {
+pub(crate) fn run_query<'a>(q: &'a Term, driver: &'a Driver) -> impl Iterator<Item = Term> + 'a {
     qeval(q, driver, once(Dict::default())).flat_map(move |dict| dict.inst(q))
 }
 
@@ -122,22 +119,20 @@ where
 
 #[cfg(test)]
 mod tests {
-    extern crate test;
 
     use super::*;
     use crate::ast::*;
 
     #[test]
     fn test_eval1() {
-        let rule1 =
-            arr(vec![string("append"), arr(vec![]), var("y"), var("y")]).expend_to(unit());
+        let rule1 = arr(vec![string("append"), arr(vec![]), var("y"), var("y")]).expand_to(unit());
         let rule2 = arr(vec![
             string("append"),
             slice(vec![var("u")], "v"),
             var("y"),
             slice(vec![var("u")], "z"),
         ])
-        .expend_to(arr(vec![string("append"), var("v"), var("y"), var("z")]).q());
+        .expand_to(arr(vec![string("append"), var("v"), var("y"), var("z")]).q());
 
         let db = Driver::new(vec![rule2, rule1]);
         let qry1 = arr(vec![
@@ -205,15 +200,14 @@ mod tests {
 
     #[test]
     fn test_eval2() {
-        let rule1 =
-            arr(vec![string("append"), arr(vec![]), var("y"), var("y")]).expend_to(unit());
+        let rule1 = arr(vec![string("append"), arr(vec![]), var("y"), var("y")]).expand_to(unit());
         let rule2 = arr(vec![
             string("append"),
             slice(vec![var("u")], "v"),
             var("y"),
             slice(vec![var("u")], "z"),
         ])
-        .expend_to(arr(vec![string("append"), var("v"), var("y"), var("z")]).q());
+        .expand_to(arr(vec![string("append"), var("v"), var("y"), var("z")]).q());
 
         let db = Driver::new(vec![rule2, rule1]);
         let qry1 = arr(vec![

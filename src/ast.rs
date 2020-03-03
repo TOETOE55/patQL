@@ -1,5 +1,5 @@
 use crate::unification::UnifyingPat;
-use std::fmt::{Display, Error, Formatter, Debug};
+use std::fmt::{Debug, Display, Error, Formatter};
 use std::ops::{BitAnd, BitOr, Not};
 use uuid::Uuid;
 
@@ -109,7 +109,7 @@ impl Pat {
         Term::Filter(decr.to_string(), f, self)
     }
 
-    pub fn expend_to(self, q: Term) -> Decl {
+    pub fn expand_to(self, q: Term) -> Decl {
         Decl {
             pat: self,
             expanded: q,
@@ -117,7 +117,7 @@ impl Pat {
     }
 
     pub fn datum(self) -> Decl {
-        self.expend_to(unit())
+        self.expand_to(unit())
     }
 }
 
@@ -155,12 +155,8 @@ impl Term {
         match self {
             Term::Unit => Term::Unit,
             Term::Simple(p) => Term::Simple(p.rename(id)),
-            Term::Conjoin(p, q) => {
-                Term::Conjoin(Box::new(p.rename(id)), Box::new(q.rename(id)))
-            }
-            Term::Disjoint(p, q) => {
-                Term::Disjoint(Box::new(p.rename(id)), Box::new(q.rename(id)))
-            }
+            Term::Conjoin(p, q) => Term::Conjoin(Box::new(p.rename(id)), Box::new(q.rename(id))),
+            Term::Disjoint(p, q) => Term::Disjoint(Box::new(p.rename(id)), Box::new(q.rename(id))),
             Term::Negative(q) => Term::Negative(Box::new(q.rename(id))),
             Term::Filter(d, f, p) => Term::Filter(d.clone(), *f, p.rename(id)),
         }
@@ -202,7 +198,7 @@ impl BitOr for Term {
 impl Display for Term {
     fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
         match self {
-            Term::Unit => f.write_str("true"),
+            Term::Unit => f.write_str("unit"),
             Term::Simple(p) => write!(f, "{}", p),
             Term::Conjoin(p, q) => write!(f, "({} & {})", p, q),
             Term::Disjoint(p, q) => write!(f, "({} | {})", p, q),
@@ -223,17 +219,15 @@ impl PartialEq for Term {
         match (self, other) {
             (Term::Unit, Term::Unit) => true,
             (Term::Simple(p), Term::Simple(q)) => p.eq(q),
-            (Term::Conjoin(p1,q1), Term::Conjoin(p2,q2)) |
-            (Term::Disjoint(p1,q1), Term::Disjoint(p2,q2)) => p1.eq(p2) && q1.eq(q2),
+            (Term::Conjoin(p1, q1), Term::Conjoin(p2, q2))
+            | (Term::Disjoint(p1, q1), Term::Disjoint(p2, q2)) => p1.eq(p2) && q1.eq(q2),
             (Term::Negative(n), Term::Negative(m)) => n.eq(m),
             _ => false,
         }
     }
 }
 
-impl Eq for Term {
-
-}
+impl Eq for Term {}
 
 impl Decl {
     pub fn rename(&self) -> Self {
@@ -247,7 +241,13 @@ impl Decl {
     pub fn new(pat: Pat, body: Term) -> Self {
         Self {
             pat,
-            expanded: body
+            expanded: body,
         }
+    }
+}
+
+impl Display for Decl {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
+        write!(f, "{} => {}", self.pat, self.expanded)
     }
 }

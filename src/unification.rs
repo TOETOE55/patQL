@@ -105,7 +105,6 @@ pub fn depends_on(val: UnifyingPat, var: &str, dict: &Dict) -> bool {
 
 #[cfg(test)]
 mod tests {
-    extern crate test;
     use super::*;
     use crate::ast::{arr, num, slice, string, var};
 

@@ -134,7 +134,7 @@ pub mod decl {
     }
 
     pub fn decls<'a>() -> impl Parser<ParseState<'a>, Target = Vec<Decl>> {
-        (decl().wrap() << lexem(';')).many().wrap() << psc::eof()//.snoc(decl().wrap() << lexem('.'))
+        (decl().wrap() << lexem(';')).many().wrap() << psc::eof() //.snoc(decl().wrap() << lexem('.'))
     }
 }
 
@@ -195,7 +195,9 @@ mod tests {
             .expand_to((slice(vec![var("x")], "x").q() & var("x").q()) | string("123").q());
         assert_eq!(res, decl);
 
-        let mut src = ParseState::new("?main => ([?x, ...?x] & ?x) | \"123\";\n?main => ([?x, ...?x] & ?x) | \"123\";");
+        let mut src = ParseState::new(
+            "?main => ([?x, ...?x] & ?x) | \"123\";\n?main => ([?x, ...?x] & ?x) | \"123\";",
+        );
         let res = decl::decls().parse(&mut src).unwrap();
         let decl = var("main")
             .expand_to((slice(vec![var("x")], "x").q() & var("x").q()) | string("123").q());

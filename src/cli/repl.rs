@@ -1,13 +1,12 @@
 use crate::cli::args::Opt;
 use crate::cli::preload::pre;
-use pat_ql::ast::{Decl, Term};
+use pat_ql::ast::Decl;
 use pat_ql::evaluation::Driver;
 use pat_ql::parse::grammar::decl::decls;
 use pat_ql::parse::grammar::term_phase::term;
-use psc::{ParseMsg, ParseState, Parser};
+use psc::{ParseState, Parser};
 use std::convert::identity;
 use std::io::{stdin, stdout, BufRead, Read, Write};
-use std::path::{Path, PathBuf};
 use std::str;
 use std::{fs, io};
 use structopt::StructOpt;
@@ -19,27 +18,26 @@ pub fn app() {
         .iter()
         .map(String::as_str)
         .flat_map(parse_file)
-        .flat_map(identity)
+        .flatten()
         .chain(pre())
         .collect::<Vec<Decl>>();
-//
-//    for decl in decls.iter() {
-//        println!("{}", decl);
-//    }
+    //
+    //    for decl in decls.iter() {
+    //        println!("{}", decl);
+    //    }
 
     repl(decls)
 }
 
 fn repl(pre: Vec<Decl>) {
-
     let drive = Driver::new(pre);
-    let mut read = stdin();
+    let read = stdin();
     let mut write = stdout();
     loop {
-        write.write(">".as_bytes());
-        write.flush();
+        write.write(">".as_bytes()).unwrap();
+        write.flush().unwrap();
         let mut line = String::new();
-        read.read_line(&mut line);
+        read.read_line(&mut line).unwrap();
 
         let mut state = ParseState::new(&line);
         let term = term().parse(&mut state);
@@ -50,12 +48,12 @@ fn repl(pre: Vec<Decl>) {
                 continue;
             }
         };
-        write.write("press enter:".as_bytes());
-        write.flush();
-        let mut iter = drive.query(&term);
+        write.write("press enter:".as_bytes()).unwrap();
+        write.flush().unwrap();
+        let iter = drive.query(&term);
         for (_, result) in read.lock().lines().zip(iter) {
             print!("{}", result);
-            write.flush();
+            write.flush().unwrap();
         }
         println!("finished");
     }

@@ -1,47 +1,50 @@
-use crate::ast::{Name, Pat};
+use crate::ast::{Evaluation, Name, Pat};
 use crate::evaluation::Dict;
-use crate::unification::UnifyErr::{CannotUnify, CycleDependency};
+use crate::instantiation::substitute;
+use crate::unification::UnifyErr::{CannotReduce, CannotUnify, CycleDependency};
+use std::rc::Rc;
 
-#[derive(Copy, Clone, Debug, Eq, PartialEq)]
-pub enum UnifyingPat<'a> {
-    Num(&'a i64),
-    Str(&'a str),
-    Var(&'a Name),
-    Slice(&'a [Pat], Option<&'a Name>),
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum UnifyingPat {
+    Num(i64),
+    Str(String),
+    Var(Rc<Name>),
+    Slice(Vec<Rc<Self>>, Option<Rc<Name>>),
+    Eval(Evaluation<Rc<Self>>),
 }
 
-#[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum UnifyErr<'a> {
-    CannotUnify(UnifyingPat<'a>, UnifyingPat<'a>),
-    CycleDependency(UnifyingPat<'a>, UnifyingPat<'a>),
+#[derive(Clone, Debug, Eq, PartialEq)]
+pub enum UnifyErr {
+    CannotUnify(Rc<UnifyingPat>, Rc<UnifyingPat>),
+    CycleDependency(Rc<UnifyingPat>, Rc<UnifyingPat>),
+    CannotReduce(Rc<UnifyingPat>),
 }
 
-pub type UnifyResult<'a, T = ()> = Result<T, UnifyErr<'a>>;
+pub type UnifyResult<T = ()> = Result<T, UnifyErr>;
 
-impl UnifyingPat<'_> {
-    pub fn unified(self) -> Pat {
+impl UnifyingPat {
+    pub fn unified(&self) -> Pat {
         match self {
             UnifyingPat::Num(n) => Pat::Num(*n),
             UnifyingPat::Str(s) => Pat::Str(s.to_string()),
-            UnifyingPat::Var(v) => Pat::Var(v.to_owned()),
-            UnifyingPat::Slice(ps, v) => Pat::Arr(ps.to_vec(), v.cloned()),
+            UnifyingPat::Var(v) => Pat::Var((**v).to_owned()),
+            UnifyingPat::Slice(ps, v) => Pat::Arr(
+                ps.iter().map(|x| x.unified()).collect(),
+                v.clone().map(|x| (*x).clone()),
+            ),
+            UnifyingPat::Eval(e) => Pat::Eval(e.clone().map(|x| Box::new(x.unified()))),
         }
     }
 }
 
-pub(crate) fn unify<'a>(
-    p: UnifyingPat<'a>,
-    q: UnifyingPat<'a>,
-    dict: &mut Dict<'a>,
-) -> UnifyResult<'a> {
+pub(crate) fn unify(p: Rc<UnifyingPat>, q: Rc<UnifyingPat>, dict: &mut Dict) -> UnifyResult {
     use UnifyingPat::*;
-    match (p, q) {
+    match (&*p, &*q) {
         (Num(m), Num(n)) if m == n => Ok(()),
         (Str(s1), Str(s2)) if s1 == s2 => Ok(()),
-        (v @ Var(_), p) | (p, v @ Var(_)) => solve(v, p, dict),
         (Slice(ps, None), Slice(qs, None)) if ps.len() == qs.len() => {
             for (p, q) in ps.iter().zip(qs) {
-                unify(p.to_unify(), q.to_unify(), dict)?;
+                unify(p.clone(), q.clone(), dict)?;
             }
             Ok(())
         }
@@ -50,18 +53,26 @@ pub(crate) fn unify<'a>(
         {
             let (qs_prefix, qs_suffix) = qs.split_at(ps.len());
             for (p, q) in ps.iter().zip(qs_prefix) {
-                unify(p.to_unify(), q.to_unify(), dict)?;
+                unify(p.clone(), q.clone(), dict)?;
             }
-            solve(Var(v), Slice(qs_suffix, s), dict)
+            solve(
+                Rc::new(Var(v.clone())),
+                Rc::new(Slice(qs_suffix.to_vec(), s.clone())),
+                dict,
+            )
         }
+        (Var(_), _) => solve(p, q, dict),
+        (_, Var(_)) => solve(q, p, dict),
+        (Eval(..), _) => unify(normalize(p, dict).map(Rc::new)?, q, dict),
+        (_, Eval(..)) => unify(p, normalize(q, dict).map(Rc::new)?, dict),
         _ => Err(CannotUnify(p, q)),
     }
 }
 
-fn solve<'a>(var: UnifyingPat<'a>, val: UnifyingPat<'a>, dict: &mut Dict<'a>) -> UnifyResult<'a> {
+fn solve(var: Rc<UnifyingPat>, val: Rc<UnifyingPat>, dict: &mut Dict) -> UnifyResult {
     use UnifyingPat::*;
 
-    let name = match var {
+    let name = match &*var {
         Var(v) => v,
         _ => panic!("expected Var"),
     };
@@ -70,36 +81,142 @@ fn solve<'a>(var: UnifyingPat<'a>, val: UnifyingPat<'a>, dict: &mut Dict<'a>) ->
         return unify(bind, val, dict);
     }
 
-    if let Var(v) = val {
+    if let Var(v) = &*val {
         if let Some(bind) = dict.get(v) {
             return unify(var, bind, dict);
         }
         if v != name {
-            dict.insert(name, val);
+            dict.insert(name.clone(), val);
         }
 
         return Ok(());
     }
 
-    if depends_on(val, name, dict) {
+    if depends_on(&val, name, dict) {
         return Err(CycleDependency(var, val));
     }
 
-    dict.insert(name, val);
+    dict.insert(name.clone(), val);
     Ok(())
 }
 
-pub fn depends_on(val: UnifyingPat, var: &str, dict: &Dict) -> bool {
+pub fn depends_on(val: &UnifyingPat, var: &str, dict: &Dict) -> bool {
     use UnifyingPat::*;
     match val {
-        Var(v) => v == var || !dict.get(v).into_iter().all(|p| !depends_on(p, var, dict)),
+        Var(v) => v.as_str() == var || !dict.get(v).into_iter().all(|p| !depends_on(&p, var, dict)),
         Slice(pats, slice) => {
-            !pats.iter().all(|p| !depends_on(p.to_unify(), var, dict))
+            !pats.iter().all(|p| !depends_on(p, var, dict))
                 || slice.as_ref().map_or(false, |v| {
-                    *v == var || !dict.get(v).into_iter().all(|p| !depends_on(p, var, dict))
+                    v.as_str() == var
+                        || !dict.get(v).into_iter().all(|p| !depends_on(&p, var, dict))
                 })
         }
         _ => false,
+    }
+}
+
+fn normalize(pat: Rc<UnifyingPat>, dict: &Dict) -> UnifyResult<UnifyingPat> {
+    use UnifyingPat::*;
+
+    let nf = substitute(&pat.unified(), dict)
+        .map(|x| x.to_unify())
+        .map_err(|_| CannotReduce(pat.clone()))?;
+    let e = match &*nf {
+        Eval(e) => e,
+        _ => panic!("expected Evaluation, unexpected {}", pat.unified()),
+    };
+
+    match e {
+        Evaluation::Add(x, y) => match (&**x, &**y) {
+            (Num(m), Num(n)) => Ok(Num(m + n)),
+            (Eval(_), Num(n)) => {
+                if let Num(m) = normalize(x.clone(), dict)? {
+                    Ok(Num(m + *n))
+                } else {
+                    Err(CannotReduce(x.clone()))
+                }
+            }
+            (Num(m), Eval(_)) => {
+                if let Num(n) = normalize(y.clone(), dict)? {
+                    Ok(Num(*m + n))
+                } else {
+                    Err(CannotReduce(y.clone()))
+                }
+            }
+            _ => Err(CannotReduce(pat)),
+        },
+        Evaluation::Sub(x, y) => match (&**x, &**y) {
+            (Num(m), Num(n)) => Ok(Num(m - n)),
+            (Eval(_), Num(n)) => {
+                if let Num(m) = normalize(x.clone(), dict)? {
+                    Ok(Num(m - *n))
+                } else {
+                    Err(CannotReduce(x.clone()))
+                }
+            }
+            (Num(m), Eval(_)) => {
+                if let Num(n) = normalize(y.clone(), dict)? {
+                    Ok(Num(*m - n))
+                } else {
+                    Err(CannotReduce(y.clone()))
+                }
+            }
+            _ => Err(CannotReduce(pat)),
+        },
+        Evaluation::Mul(x, y) => match (&**x, &**y) {
+            (Num(m), Num(n)) => Ok(Num(m * n)),
+            (Eval(_), Num(n)) => {
+                if let Num(m) = normalize(x.clone(), dict)? {
+                    Ok(Num(m * *n))
+                } else {
+                    Err(CannotReduce(x.clone()))
+                }
+            }
+            (Num(m), Eval(_)) => {
+                if let Num(n) = normalize(y.clone(), dict)? {
+                    Ok(Num(*m * n))
+                } else {
+                    Err(CannotReduce(y.clone()))
+                }
+            }
+            _ => Err(CannotReduce(pat)),
+        },
+        Evaluation::Div(x, y) => match (&**x, &**y) {
+            (Num(m), Num(n)) => Ok(Num(m / n)),
+            (Eval(_), Num(n)) => {
+                if let Num(m) = normalize(x.clone(), dict)? {
+                    Ok(Num(m / *n))
+                } else {
+                    Err(CannotReduce(x.clone()))
+                }
+            }
+            (Num(m), Eval(_)) => {
+                if let Num(n) = normalize(y.clone(), dict)? {
+                    Ok(Num(*m / n))
+                } else {
+                    Err(CannotReduce(y.clone()))
+                }
+            }
+            _ => Err(CannotReduce(pat)),
+        },
+        Evaluation::Append(x, y) => match (&**x, &**y) {
+            (Str(m), Str(n)) => Ok(Str(m.clone() + n)),
+            (Eval(_), Str(n)) => {
+                if let Str(m) = normalize(x.clone(), dict)? {
+                    Ok(Str(m + n))
+                } else {
+                    Err(CannotReduce(x.clone()))
+                }
+            }
+            (Str(m), Eval(_)) => {
+                if let Str(n) = normalize(y.clone(), dict)? {
+                    Ok(Str(m.clone() + &n))
+                } else {
+                    Err(CannotReduce(y.clone()))
+                }
+            }
+            _ => Err(CannotReduce(pat)),
+        },
     }
 }
 
@@ -121,7 +238,16 @@ mod tests {
         ]);
         let mut dict = Dict::default();
         dict.unify(&p, &q).unwrap();
-        assert_eq!(dict.subst(&p).unwrap(), dict.subst(&q).unwrap())
+        assert_eq!(dict.subst(&p).unwrap(), dict.subst(&q).unwrap());
+
+        // [?x, 1 + ?x]
+        let p = arr(vec![var("x"), num(1) + var("x")]);
+        // [3, 4]
+        let q = arr(vec![num(3), num(4)]);
+        let r = arr(vec![num(3), num(1) + num(3)]);
+        let mut dict = Dict::default();
+        dict.unify(&p, &q).unwrap();
+        assert_eq!(dict.subst(&p).unwrap(), dict.subst(&r).unwrap());
     }
 
     #[test]

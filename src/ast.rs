@@ -1,6 +1,7 @@
 use crate::unification::UnifyingPat;
 use std::fmt::{Debug, Display, Error, Formatter};
-use std::ops::{BitAnd, BitOr, Not};
+use std::ops::{Add, BitAnd, BitOr, Div, Mul, Not, Sub};
+use std::rc::Rc;
 use uuid::Uuid;
 
 pub type Name = String;
@@ -14,18 +15,18 @@ pub enum Pat {
     // ?x
     Var(Name),
     // [prefix, ...?x]
-    Arr(Vec<Pat>, Option<Name>),
+    Arr(Vec<Self>, Option<Name>),
     // ?x + ?y * 2
-    Eval(Op, Vec<Pat>),
+    Eval(Evaluation<Box<Self>>),
 }
 
 #[derive(Clone, Copy, Debug, Eq, PartialEq)]
-pub enum Op {
-    Plus,
-    Minus,
-    Mult,
-    Divi,
-    Append,
+pub enum Evaluation<T> {
+    Add(T, T),
+    Sub(T, T),
+    Mul(T, T),
+    Div(T, T),
+    Append(T, T),
 }
 
 #[derive(Clone)]
@@ -80,14 +81,17 @@ pub fn unit() -> Term {
 }
 
 impl Pat {
-    pub(crate) fn to_unify(&self) -> UnifyingPat {
-        match self {
-            Pat::Num(n) => UnifyingPat::Num(n),
-            Pat::Str(s) => UnifyingPat::Str(s),
-            Pat::Var(v) => UnifyingPat::Var(v),
-            Pat::Arr(arr, v) => UnifyingPat::Slice(arr, v.as_ref()),
-            Pat::Eval(_, _) => unimplemented!(),
-        }
+    pub(crate) fn to_unify(&self) -> Rc<UnifyingPat> {
+        Rc::new(match self {
+            Pat::Num(n) => UnifyingPat::Num(*n),
+            Pat::Str(s) => UnifyingPat::Str(s.clone()),
+            Pat::Var(v) => UnifyingPat::Var(Rc::new(v.clone())),
+            Pat::Arr(arr, v) => UnifyingPat::Slice(
+                arr.iter().map(Pat::to_unify).collect(),
+                v.clone().map(Rc::new),
+            ),
+            Pat::Eval(e) => UnifyingPat::Eval(e.clone().map(|x| x.to_unify())),
+        })
     }
 
     pub(crate) fn rename(&self, id: &str) -> Self {
@@ -119,6 +123,10 @@ impl Pat {
     pub fn datum(self) -> Decl {
         self.expand_to(unit())
     }
+
+    pub fn append(self, rhs: Self) -> Self {
+        Pat::Eval(Evaluation::Append(Box::new(self), Box::new(rhs)))
+    }
 }
 
 impl Display for Pat {
@@ -145,7 +153,66 @@ impl Display for Pat {
                 }
                 write!(f, "...?{}]", v)
             }
-            Pat::Eval(_, _) => unimplemented!(),
+            Pat::Eval(e) => write!(f, "{}", e),
+        }
+    }
+}
+
+impl Add for Pat {
+    type Output = Self;
+
+    fn add(self, rhs: Self) -> Self::Output {
+        Pat::Eval(Evaluation::Add(Box::new(self), Box::new(rhs)))
+    }
+}
+
+impl Sub for Pat {
+    type Output = Self;
+
+    fn sub(self, rhs: Self) -> Self::Output {
+        Pat::Eval(Evaluation::Sub(Box::new(self), Box::new(rhs)))
+    }
+}
+
+impl Mul for Pat {
+    type Output = Self;
+
+    fn mul(self, rhs: Self) -> Self::Output {
+        Pat::Eval(Evaluation::Mul(Box::new(self), Box::new(rhs)))
+    }
+}
+
+impl Div for Pat {
+    type Output = Self;
+
+    fn div(self, rhs: Self) -> Self::Output {
+        Pat::Eval(Evaluation::Div(Box::new(self), Box::new(rhs)))
+    }
+}
+
+impl<T> Evaluation<T> {
+    pub fn map<U, F>(self, mut f: F) -> Evaluation<U>
+    where
+        F: FnMut(T) -> U,
+    {
+        match self {
+            Evaluation::Add(x, y) => Evaluation::Add(f(x), f(y)),
+            Evaluation::Sub(x, y) => Evaluation::Sub(f(x), f(y)),
+            Evaluation::Mul(x, y) => Evaluation::Mul(f(x), f(y)),
+            Evaluation::Div(x, y) => Evaluation::Div(f(x), f(y)),
+            Evaluation::Append(x, y) => Evaluation::Append(f(x), f(y)),
+        }
+    }
+}
+
+impl<T: Display> Display for Evaluation<T> {
+    fn fmt(&self, f: &mut Formatter<'_>) -> Result<(), Error> {
+        match self {
+            Evaluation::Add(x, y) => write!(f, "({} + {})", x, y),
+            Evaluation::Sub(x, y) => write!(f, "({} - {})", x, y),
+            Evaluation::Mul(x, y) => write!(f, "({} * {})", x, y),
+            Evaluation::Div(x, y) => write!(f, "({} / {})", x, y),
+            Evaluation::Append(x, y) => write!(f, "({} <> {})", x, y),
         }
     }
 }

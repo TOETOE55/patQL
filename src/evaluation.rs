@@ -1,14 +1,15 @@
-use crate::ast::{Decl, Pat, Term};
+use crate::ast::{Decl, Name, Pat, Term};
 use crate::instantiation::{instantiate, substitute, InstantiateResult};
 use crate::unification::{unify, UnifyResult, UnifyingPat};
 use bumpalo::Bump;
 use std::collections::HashMap;
 use std::iter::once;
+use std::rc::Rc;
 use std::slice::Iter;
 
 #[derive(Clone, Debug, Default, Eq, PartialEq)]
-pub struct Dict<'a> {
-    dict: HashMap<&'a str, UnifyingPat<'a>>,
+pub struct Dict {
+    dict: HashMap<Rc<Name>, Rc<UnifyingPat>>,
 }
 
 pub struct Driver {
@@ -16,16 +17,20 @@ pub struct Driver {
     arena: Bump,
 }
 
-impl<'a> Dict<'a> {
-    pub(crate) fn get(&self, var: &str) -> Option<UnifyingPat<'a>> {
-        self.dict.get(var).copied()
+impl Dict {
+    pub(crate) fn get(&self, var: &Name) -> Option<Rc<UnifyingPat>> {
+        self.dict.get(var).cloned()
     }
 
-    pub(crate) fn insert(&mut self, var: &'a str, val: UnifyingPat<'a>) -> Option<UnifyingPat<'a>> {
+    pub(crate) fn insert(
+        &mut self,
+        var: Rc<Name>,
+        val: Rc<UnifyingPat>,
+    ) -> Option<Rc<UnifyingPat>> {
         self.dict.insert(var, val)
     }
 
-    pub fn unify(&mut self, p: &'a Pat, q: &'a Pat) -> UnifyResult {
+    pub fn unify(&mut self, p: &Pat, q: &Pat) -> UnifyResult {
         unify(p.to_unify(), q.to_unify(), self)
     }
 
@@ -67,9 +72,9 @@ pub(crate) fn qeval<'a, I>(
     q: &'a Term,
     driver: &'a Driver,
     dicts: I,
-) -> Box<dyn Iterator<Item = Dict<'a>> + 'a>
+) -> Box<dyn Iterator<Item = Dict> + 'a>
 where
-    I: Iterator<Item = Dict<'a>> + 'a,
+    I: Iterator<Item = Dict> + 'a,
 {
     match q {
         Term::Unit => Box::new(dicts),
@@ -100,14 +105,14 @@ fn apply_asserts<'a, I>(
     pat: &'a Pat,
     driver: &'a Driver,
     dicts: I,
-) -> impl Iterator<Item = Dict<'a>> + 'a
+) -> impl Iterator<Item = Dict> + 'a
 where
-    I: Iterator<Item = Dict<'a>> + 'a,
+    I: Iterator<Item = Dict> + 'a,
 {
     dicts.flat_map(move |dict| {
-        driver.connect().flat_map(move |def| {
+        driver.connect().flat_map(move |decl| {
             let mut dict = dict.clone();
-            let renamed = driver.renamer(def);
+            let renamed = driver.renamer(decl);
             if let Ok(()) = dict.unify(pat, &renamed.pat) {
                 qeval(&renamed.expanded, driver, once(dict))
             } else {

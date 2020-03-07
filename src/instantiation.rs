@@ -1,4 +1,4 @@
-use crate::ast::{Name, Pat, Term};
+use crate::ast::{Evaluation, Name, Pat, Term};
 use crate::evaluation::Dict;
 use crate::instantiation::InstantiateErr::{UnexpectedPattern, UnsolvedVariable};
 
@@ -11,6 +11,15 @@ pub enum InstantiateErr {
 pub type InstantiateResult<T = ()> = Result<T, InstantiateErr>;
 
 pub(crate) fn substitute(pat: &Pat, dict: &Dict) -> InstantiateResult<Pat> {
+    pub(crate) fn sub_eval(e: &Evaluation<Box<Pat>>, dict: &Dict) -> InstantiateResult<Pat> {
+        Ok(match e {
+            Evaluation::Add(x, y) => substitute(x, dict)? + substitute(y, dict)?,
+            Evaluation::Sub(x, y) => substitute(x, dict)? - substitute(y, dict)?,
+            Evaluation::Mul(x, y) => substitute(x, dict)? * substitute(y, dict)?,
+            Evaluation::Div(x, y) => substitute(x, dict)? / substitute(y, dict)?,
+            Evaluation::Append(x, y) => substitute(x, dict)?.append(substitute(y, dict)?),
+        })
+    }
     Ok(match pat {
         Pat::Var(v) => {
             let pat = dict
@@ -36,6 +45,7 @@ pub(crate) fn substitute(pat: &Pat, dict: &Dict) -> InstantiateResult<Pat> {
 
             Pat::Arr(collect, None)
         }
+        Pat::Eval(e) => sub_eval(e, dict)?,
         p => p.clone(),
     })
 }

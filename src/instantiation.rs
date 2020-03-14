@@ -18,6 +18,8 @@ pub(crate) fn substitute(pat: &Pat, dict: &Dict) -> InstantiateResult<Pat> {
             Evaluation::Mul(x, y) => substitute(x, dict)? * substitute(y, dict)?,
             Evaluation::Div(x, y) => substitute(x, dict)? / substitute(y, dict)?,
             Evaluation::Append(x, y) => substitute(x, dict)?.append(substitute(y, dict)?),
+            Evaluation::Pos(x) => substitute(x, dict)?,
+            Evaluation::Neg(x) => -substitute(x, dict)?,
         })
     }
     Ok(match pat {

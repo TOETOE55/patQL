@@ -1,71 +1,179 @@
-use psc::covert::IntoParser;
-use psc::{reg, ParseFn, ParseMsg, ParseState, Parser};
-
-fn lexem<'a, A>(
-    p: impl IntoParser<ParseState<'a>, Target = A>,
-) -> impl Parser<ParseState<'a>, Target = A> {
-    let blank = psc::char('\n').or(' ').or('\t').or('\r');
-    blank.clone().many_().wrap() >> p << blank.many_()
-}
-
 pub mod pat_phase {
     use super::*;
     use crate::ast::{arr, Pat};
+    use psc::{Parser, reg, ParseState, ParserExt, ParseFn, lexeme, ParseLogger, wrap};
 
-    pub fn tok_int<'a>() -> impl Parser<ParseState<'a>, Target = Pat> {
+    pub fn tok_int() -> impl for<'a> Parser<ParseState<'a>, Target = Pat> {
         reg("-?[1-9]\\d*")
             .map(str::parse::<i64>)
             .map(Result::unwrap)
             .map(Pat::Num)
     }
 
-    pub fn tok_str<'a>() -> impl Parser<ParseState<'a>, Target = Pat> {
+    pub fn tok_str() -> impl for<'a> Parser<ParseState<'a>, Target = Pat> {
         reg("\"([^\"]|\\.)*\"")
-            .map(|s: &str| &s[1..s.len() - 1])
+            .map((|s: &str| &s[1..s.len() - 1]) as for<'a> fn (&'a str) -> &'a str)
             .map(str::to_owned)
             .map(Pat::Str)
     }
 
-    pub fn tok_var<'a>() -> impl Parser<ParseState<'a>, Target = Pat> {
+    pub fn tok_var() -> impl for<'a> Parser<ParseState<'a>, Target = Pat> {
         reg("\\?[0-9a-zA-Z\\-_$]+")
-            .map(|s: &str| &s[1..])
+            .map((|s: &str| &s[1..]) as for<'a> fn (&'a str) -> &'a str)
             .map(str::to_owned)
             .map(Pat::Var)
     }
 
     pub fn arr_slice<'a>() -> impl Parser<ParseState<'a>, Target = Pat> {
-        fn parse_arr(s: &mut ParseState) -> Result<Pat, ParseMsg> {
-            lexem('[').parse(s)?;
-            let mut prefix = (pat().wrap() << lexem(',')).many().parse(s)?; // (pattern,)*
-            let last = pat().parse(s)?;
-            lexem(']').parse(s)?;
+        fn parse_arr(s: &mut ParseState, logger: &mut ParseLogger) -> Option<Pat> {
+            lexeme('[').parse(s, logger)?;
+            let mut prefix = (wrap(pat()) << lexeme(',')).many().parse(s, logger)?; // (pattern,)*
+            let last = pat().parse(s, logger)?;
+            lexeme(']').parse(s, logger)?;
 
             prefix.push(last);
-            Ok(arr(prefix))
+            Some(arr(prefix))
         }
 
-        fn parse_slice(s: &mut ParseState) -> Result<Pat, ParseMsg> {
-            lexem('[').parse(s)?;
-            let prefix = (pat().wrap() << lexem(',')).many().parse(s)?; // (pattern,)*
-            let last = (psc::strg("...").wrap() >> tok_var()).parse(s)?;
-            lexem(']').parse(s)?;
+        fn parse_slice(s: &mut ParseState, logger: &mut ParseLogger) -> Option<Pat> {
+            lexeme('[').parse(s, logger)?;
+            let prefix = (wrap(pat()) << lexeme(',')).many().parse(s, logger)?; // (pattern,)*
+            let last = (wrap("...") >> tok_var()).parse(s, logger)?;
+            lexeme(']').parse(s, logger)?;
 
             let v = match last {
                 Pat::Var(v) => v,
                 p => panic!("unexpected {}", p),
             };
 
-            Ok(Pat::Arr(prefix, Some(v)))
+            Some(Pat::Arr(prefix, Some(v)))
         }
 
-        let empty = lexem('[').wrap() >> psc::pure(|| arr(vec![])) << lexem(']');
-        empty | ParseFn(parse_slice) | ParseFn(parse_arr)
+        let empty = wrap(lexeme('[')) >> psc::pure(|| arr(vec![])) << lexeme(']');
+
+
+        wrap(empty) | ParseFn(parse_slice) | ParseFn(parse_arr)
     }
 
     pub fn pat<'a>() -> impl Parser<ParseState<'a>, Target = Pat> {
-        tok_str().wrap() | tok_int() | tok_var() | arr_slice()
+        fn parse_eval(stream: &mut ParseState, logger: &mut ParseLogger) -> Option<Pat> {
+            (wrap(lexeme('{')) >> evaluation::expr() << '}').parse(stream, logger)
+        }
+
+        wrap(tok_str()) | tok_int() | tok_var() | arr_slice() | ParseFn(parse_eval)
+    }
+
+    pub mod evaluation {
+        use super::*;
+        use psc::pure;
+        use crate::ast::Evaluation;
+
+        pub fn expr<'a>() -> impl Parser<ParseState<'a>, Target = Pat> {
+            fn parse_expr(stream: &mut ParseState, logger: &mut ParseLogger) -> Option<Pat> {
+                let e1 = mult().parse(stream, logger)?;
+                let e2 = expr_().parse(stream, logger)?;
+                Some(match e2 {
+                    None => e1,
+                    Some(f) => f(e1),
+                })
+            }
+            ParseFn(parse_expr)
+        }
+
+        fn expr_<'a>() -> impl Parser<ParseState<'a>, Target = Option<Box<dyn FnOnce(Pat) -> Pat>>> {
+            fn parse_plus(
+                stream: &mut ParseState,
+                logger: &mut ParseLogger,
+            ) -> Option<Option<Box<dyn FnOnce(Pat) -> Pat>>> {
+                lexeme('+').parse(stream, logger)?;
+                let e1 = mult().parse(stream, logger)?;
+                let e2 = expr_().parse(stream, logger)?;
+                Some(Some(match e2 {
+                    None => Box::new(move |e: Pat| e + e1) as Box<dyn FnOnce(_) -> _>,
+                    Some(f) => Box::new(move |e| f(e + e1)),
+                }))
+            }
+
+            fn parse_minu(
+                stream: &mut ParseState,
+                logger: &mut ParseLogger,
+            ) -> Option<Option<Box<dyn FnOnce(Pat) -> Pat>>> {
+                lexeme('-').parse(stream, logger)?;
+                let e1 = mult().parse(stream, logger)?;
+                let e2 = expr_().parse(stream, logger)?;
+                Some(Some(match e2 {
+                    None => Box::new(move |e: Pat| e - e1) as Box<dyn FnOnce(Pat) -> Pat>,
+                    Some(f) => Box::new(move |e| f(e - e1)),
+                }))
+            }
+
+            wrap(ParseFn(parse_plus)) | ParseFn(parse_minu) | pure(|| None)
+        }
+
+        fn mult<'a>() -> impl Parser<ParseState<'a>, Target = Pat> {
+            fn parse_mul(stream: &mut ParseState, logger: &mut ParseLogger) -> Option<Pat> {
+                let e1 = uexpr().parse(stream, logger)?;
+                let e2 = mult_().parse(stream, logger)?;
+                Some(match e2 {
+                    None => e1,
+                    Some(f) => f(e1),
+                })
+            }
+            ParseFn(parse_mul)
+        }
+
+        fn mult_<'a>() -> impl Parser<ParseState<'a>, Target = Option<Box<dyn FnOnce(Pat) -> Pat>>> {
+            fn parse_mul(
+                stream: &mut ParseState,
+                logger: &mut ParseLogger,
+            ) -> Option<Option<Box<dyn FnOnce(Pat) -> Pat>>> {
+                lexeme('*').parse(stream, logger)?;
+                let e1 = uexpr().parse(stream, logger)?;
+                let e2 = mult_().parse(stream, logger)?;
+                Some(Some(match e2 {
+                    None => Box::new(move |e: Pat| e * e1) as Box<dyn FnOnce(Pat) -> Pat>,
+                    Some(f) => Box::new(move |e| f(e * e1)),
+                }))
+            }
+
+            fn parse_div(
+                stream: &mut ParseState,
+                logger: &mut ParseLogger,
+            ) -> Option<Option<Box<dyn FnOnce(Pat) -> Pat>>> {
+                lexeme('/').parse(stream, logger)?;
+                let e1 = uexpr().parse(stream, logger)?;
+                let e2 = mult_().parse(stream, logger)?;
+                Some(Some(match e2 {
+                    None => Box::new(move |e: Pat| e / e1) as Box<dyn FnOnce(Pat) -> Pat>,
+                    Some(f) => Box::new(move |e| f(e / e1)),
+                }))
+            }
+
+            wrap(ParseFn(parse_mul)) | ParseFn(parse_div) | pure(|| None)
+        }
+
+        fn uexpr<'a>() -> impl Parser<ParseState<'a>, Target = Pat> {
+            fn parse_posi(stream: &mut ParseState, logger: &mut ParseLogger) -> Option<Pat> {
+                lexeme('+').parse(stream, logger)?;
+                let e = uexpr().parse(stream, logger)?;
+                Some(Pat::Eval(Evaluation::Pos(Box::new(e))))
+            }
+
+            fn parse_nega(stream: &mut ParseState, logger: &mut ParseLogger) -> Option<Pat> {
+                lexeme('-').parse(stream, logger)?;
+                let e = uexpr().parse(stream, logger)?;
+                Some(-e)
+            }
+
+            fn parse_paren(stream: &mut ParseState, logger: &mut ParseLogger) -> Option<Pat> {
+                (wrap(lexeme('(')) >> expr() << ')').parse(stream, logger)
+            }
+
+            wrap(ParseFn(parse_posi)) | ParseFn(parse_nega) | ParseFn(parse_paren) | pat()
+        }
     }
 }
+
 
 /**
 ## left-recursion elimination
@@ -79,42 +187,43 @@ pub mod term_phase {
     use super::*;
     use crate::ast::{unit, Pat, Term};
     use crate::parse::grammar::pat_phase::pat;
+    use psc::{ParseState, Parser, ParseLogger, lexeme, wrap, ParseFn, ParserExt};
 
     pub fn uop_term<'a>() -> impl Parser<ParseState<'a>, Target = Term> {
-        fn parse_nega(s: &mut ParseState) -> Result<Term, ParseMsg> {
-            (lexem('~').wrap() >> uop_term()).parse(s)
+        fn parse_nega(s: &mut ParseState, logger: &mut ParseLogger) -> Option<Term> {
+            (wrap(lexeme('~')) >> uop_term()).parse(s, logger)
         }
 
-        fn parse_paren(s: &mut ParseState) -> Result<Term, ParseMsg> {
-            (lexem('(').wrap() >> term() << lexem(')')).parse(s)
+        fn parse_paren(s: &mut ParseState, logger: &mut ParseLogger) -> Option<Term> {
+            (wrap(lexeme('(')) >> term() << lexeme(')')).parse(s, logger)
         }
 
-        let unit = lexem("unit").wrap() >> psc::pure(unit);
-        let nega = ParseFn(parse_nega).wrap();
+        let unit = wrap(lexeme("unit")) >> psc::pure(unit);
+        let nega = ParseFn(parse_nega);
         let paren = ParseFn(parse_paren);
         let pat = pat().map(Pat::q);
         unit | nega | paren | pat
     }
 
     pub fn biop_term<'a>() -> impl Parser<ParseState<'a>, Target = Term> {
-        fn parse_disjoint(s: &mut ParseState) -> Result<Term, ParseMsg> {
-            let nega = uop_term().parse(s)?;
-            lexem('|').parse(s)?;
-            let disjoint = biop_term().parse(s)?;
-            Ok(nega | disjoint)
+        fn parse_disjoint(s: &mut ParseState, logger: &mut ParseLogger) -> Option<Term> {
+            let nega = uop_term().parse(s, logger)?;
+            lexeme('|').parse(s, logger)?;
+            let disjoint = biop_term().parse(s, logger)?;
+            Some(nega | disjoint)
         }
 
-        fn parse_conjoin(s: &mut ParseState) -> Result<Term, ParseMsg> {
-            let nega = uop_term().parse(s)?;
-            lexem('&').parse(s)?;
-            let conjoin = biop_term().parse(s)?;
-            Ok(nega & conjoin)
+        fn parse_conjoin(s: &mut ParseState, logger: &mut ParseLogger) -> Option<Term> {
+            let nega = uop_term().parse(s, logger)?;
+            lexeme('&').parse(s, logger)?;
+            let conjoin = biop_term().parse(s, logger)?;
+            Some(nega & conjoin)
         }
 
-        fn parse_nega(s: &mut ParseState) -> Result<Term, ParseMsg> {
-            uop_term().parse(s)
+        fn parse_nega(s: &mut ParseState, logger: &mut ParseLogger) -> Option<Term> {
+            uop_term().parse(s, logger)
         }
-        let disjoint = ParseFn(parse_disjoint).wrap();
+        let disjoint = wrap(ParseFn(parse_disjoint));
         let conjoin = ParseFn(parse_conjoin);
         let nega = ParseFn(parse_nega);
         disjoint | conjoin | nega
@@ -124,17 +233,18 @@ pub mod term_phase {
         biop_term()
     }
 }
-
+//
 pub mod decl {
     use super::*;
     use crate::ast::Decl;
+    use psc::{Parser, ParseState, lexeme, wrap, ParserExt};
 
     pub fn decl<'a>() -> impl Parser<ParseState<'a>, Target = Decl> {
-        (pat_phase::pat().wrap() << lexem("=>")).map2(term_phase::term(), Decl::new)
+        (wrap(pat_phase::pat()) << lexeme("=>")).map2(term_phase::term(), Decl::new)
     }
 
     pub fn decls<'a>() -> impl Parser<ParseState<'a>, Target = Vec<Decl>> {
-        (decl().wrap() << lexem(';')).many().wrap() << psc::eof() //.snoc(decl().wrap() << lexem('.'))
+        (wrap(decl()) << lexeme(';')).many().and_l(psc::EOF) //.snoc(decl().wrap() << lexem('.'))
     }
 }
 
@@ -144,27 +254,31 @@ mod tests {
     use crate::parse::grammar::decl;
     use crate::parse::grammar::pat_phase::pat;
     use crate::parse::grammar::term_phase::term;
-    use psc::{ParseState, Parser};
+    use psc::{ParseState, Parser, ParseLogger};
 
     #[test]
     fn test_pat() {
         let mut src = ParseState::new("\"12  \\ 3\"");
-        let res = pat().parse(&mut src).unwrap();
+        let mut logger = ParseLogger::default();
+        let res = pat().parse(&mut src, &mut logger).unwrap();
         let p = string("12  \\ 3");
         assert_eq!(res, p);
 
         let mut src = ParseState::new("?-x_-8781d-sf");
-        let res = pat().parse(&mut src).unwrap();
+        let mut logger = ParseLogger::default();
+        let res = pat().parse(&mut src, &mut logger).unwrap();
         let p = var("-x_-8781d-sf");
         assert_eq!(res, p);
 
         let mut src = ParseState::new("-123193");
-        let res = pat().parse(&mut src).unwrap();
+        let mut logger = ParseLogger::default();
+        let res = pat().parse(&mut src, &mut logger).unwrap();
         let p = num(-123193);
         assert_eq!(res, p);
 
         let mut src = ParseState::new("[[1,2, ...?x], 1, \"\", ?x]");
-        let res = pat().parse(&mut src).unwrap();
+        let mut logger = ParseLogger::default();
+        let res = pat().parse(&mut src, &mut logger).unwrap();
         let p = arr(vec![
             slice(vec![num(1), num(2)], "x"),
             num(1),
@@ -172,17 +286,30 @@ mod tests {
             var("x"),
         ]);
         assert_eq!(res, p);
+
+        let mut src = ParseState::new("[[1,2, ...?x], 1, \"\", {?x * (3 + 2)}]");
+        let mut logger = ParseLogger::default();
+        let res = pat().parse(&mut src, &mut logger).unwrap();
+        let p = arr(vec![
+            slice(vec![num(1), num(2)], "x"),
+            num(1),
+            string(""),
+            var("x") * (num(3) + num(2)) ,
+        ]);
+        assert_eq!(res, p);
     }
 
     #[test]
     fn test_term() {
         let mut src = ParseState::new("([?x, ...?x] & ?x) | \"123\"");
-        let res = term().parse(&mut src).unwrap();
+        let mut logger = ParseLogger::default();
+        let res = term().parse(&mut src, &mut logger).unwrap();
         let t = (slice(vec![var("x")], "x").q() & var("x").q()) | string("123").q();
         assert_eq!(res, t);
 
         let mut src = ParseState::new("[?x, ...?x] & ?x | \"123\"");
-        let res = term().parse(&mut src).unwrap();
+        let mut logger = ParseLogger::default();
+        let res = term().parse(&mut src, &mut logger).unwrap();
         let t = slice(vec![var("x")], "x").q() & (var("x").q() | string("123").q());
         assert_eq!(res, t);
     }
@@ -190,7 +317,8 @@ mod tests {
     #[test]
     fn test_decl() {
         let mut src = ParseState::new("?main => ([?x, ...?x] & ?x) | \"123\"");
-        let res = decl::decl().parse(&mut src).unwrap();
+        let mut logger = ParseLogger::default();
+        let res = decl::decl().parse(&mut src, &mut logger).unwrap();
         let decl = var("main")
             .expand_to((slice(vec![var("x")], "x").q() & var("x").q()) | string("123").q());
         assert_eq!(res, decl);
@@ -198,7 +326,8 @@ mod tests {
         let mut src = ParseState::new(
             "?main => ([?x, ...?x] & ?x) | \"123\";\n?main => ([?x, ...?x] & ?x) | \"123\";",
         );
-        let res = decl::decls().parse(&mut src).unwrap();
+        let mut logger = ParseLogger::default();
+        let res = decl::decls().parse(&mut src, &mut logger).unwrap();
         let decl = var("main")
             .expand_to((slice(vec![var("x")], "x").q() & var("x").q()) | string("123").q());
         assert_eq!(res, vec![decl.clone(), decl]);

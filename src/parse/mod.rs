@@ -1,8 +1,8 @@
 /**
 ## syntax
 ```BCNF
-pattern := variable | string | number | '[' ((pattern ',')* (pattern | '...' variable))? ']' | evaluation
-evaluation := pattern bi-op pattern | uni-op pattern |  '(' pattern ')'
+pattern := variable | string | number | '[' ((pattern ',')* (pattern | '...' variable))? ']' | '{' evaluation '}'
+evaluation := evaluation bi-op evaluation | uni-op evaluation |  '(' evaluation ')' | pattern
 term
     := unit
     | pattern

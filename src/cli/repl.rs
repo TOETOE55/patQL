@@ -4,8 +4,7 @@ use pat_ql::ast::Decl;
 use pat_ql::evaluation::Driver;
 use pat_ql::parse::grammar::decl::decls;
 use pat_ql::parse::grammar::term_phase::term;
-use psc::{ParseState, Parser};
-use std::convert::identity;
+use psc::{ParseLogger, ParseState, Parser};
 use std::io::{stdin, stdout, BufRead, Read, Write};
 use std::str;
 use std::{fs, io};
@@ -40,11 +39,14 @@ fn repl(pre: Vec<Decl>) {
         read.read_line(&mut line).unwrap();
 
         let mut state = ParseState::new(&line);
-        let term = term().parse(&mut state);
+        let mut logger = ParseLogger::default();
+        let term = term().parse(&mut state, &mut logger);
         let term = match term {
-            Ok(t) => t,
-            Err(err) => {
-                println!("{:?}", err);
+            Some(t) => t,
+            None => {
+                for l in logger {
+                    println!("{:?}", l);
+                }
                 continue;
             }
         };
@@ -75,11 +77,14 @@ fn read_file(file_arg: &str) -> Option<String> {
 fn parse_file(file_arg: &str) -> Option<Vec<Decl>> {
     let file_content = read_file(file_arg)?;
     let mut state = ParseState::new(&file_content);
-    let result = decls().parse(&mut state);
+    let mut logger = ParseLogger::default();
+    let result = decls().parse(&mut state, &mut logger);
     match result {
-        Ok(decls) => Some(decls),
-        Err(err) => {
-            println!("{:?}", err);
+        Some(decls) => Some(decls),
+        None => {
+            for l in logger {
+                println!("{:?}", l);
+            }
             None
         }
     }

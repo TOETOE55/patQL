@@ -217,24 +217,6 @@ fn normalize(pat: Rc<UnifyingPat>, dict: &Dict) -> UnifyResult<UnifyingPat> {
             }
             _ => Err(CannotReduce(pat)),
         },
-        Evaluation::Pos(x) => match &**x {
-            Num(n) => Ok(Num(*n)),
-            Eval(_) => if let x @ Num(_) = normalize(x.clone(), dict)? {
-                Ok(x)
-            } else {
-                Err(CannotReduce(x.clone()))
-            }
-            _ => Err(CannotReduce(pat))
-        },
-        Evaluation::Neg(x) => match &**x {
-            Num(n) => Ok(Num(*n)),
-            Eval(_) => if let Num(x) = normalize(x.clone(), dict)? {
-                Ok(Num(-x))
-            } else {
-                Err(CannotReduce(x.clone()))
-            }
-            _ => Err(CannotReduce(pat))
-        },
     }
 }
 

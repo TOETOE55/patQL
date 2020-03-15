@@ -1,6 +1,6 @@
 use crate::unification::UnifyingPat;
 use std::fmt::{Debug, Display, Error, Formatter};
-use std::ops::{Add, BitAnd, BitOr, Div, Mul, Not, Sub, Neg};
+use std::ops::{Add, BitAnd, BitOr, Div, Mul, Not, Sub};
 use std::rc::Rc;
 use uuid::Uuid;
 
@@ -26,8 +26,6 @@ pub enum Evaluation<T> {
     Sub(T, T),
     Mul(T, T),
     Div(T, T),
-    Pos(T),
-    Neg(T),
     Append(T, T),
 }
 
@@ -192,14 +190,6 @@ impl Div for Pat {
     }
 }
 
-impl Neg for Pat {
-    type Output = Self;
-
-    fn neg(self) -> Self::Output {
-        Pat::Eval(Evaluation::Neg(Box::new(self)))
-    }
-}
-
 impl<T> Evaluation<T> {
     pub fn map<U, F>(self, mut f: F) -> Evaluation<U>
     where
@@ -211,8 +201,6 @@ impl<T> Evaluation<T> {
             Evaluation::Mul(x, y) => Evaluation::Mul(f(x), f(y)),
             Evaluation::Div(x, y) => Evaluation::Div(f(x), f(y)),
             Evaluation::Append(x, y) => Evaluation::Append(f(x), f(y)),
-            Evaluation::Pos(x) => Evaluation::Pos(f(x)),
-            Evaluation::Neg(x) => Evaluation::Neg(f(x))
         }
     }
 }
@@ -225,8 +213,6 @@ impl<T: Display> Display for Evaluation<T> {
             Evaluation::Mul(x, y) => write!(f, "({} * {})", x, y),
             Evaluation::Div(x, y) => write!(f, "({} / {})", x, y),
             Evaluation::Append(x, y) => write!(f, "({} <> {})", x, y),
-            Evaluation::Pos(x) => write!(f, "+{}", x),
-            Evaluation::Neg(x) => write!(f, "-{}", x),
         }
     }
 }

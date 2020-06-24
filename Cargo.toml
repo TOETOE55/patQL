@@ -8,6 +8,6 @@ edition = "2018"
 
 [dependencies]
 uuid = { version = "0.8", features = ["v4"] }
-bumpalo = "3.2.0"
+bumpalo = "3.4.0"
 psc = { git = "https://github.com/TOETOE55/psc.git" }
 structopt = "0.3.11"

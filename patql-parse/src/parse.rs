@@ -62,6 +62,12 @@ impl<'a> ParseStream<'a> {
         P::parse(&mut self.clone()).is_ok()
     }
 
+    pub fn peek2<P1: Parse<'a>, P2: Parse<'a>>(&self) -> bool {
+        let mut s = self.clone();
+
+        P1::parse(&mut s).is_ok() && P2::parse(&mut s).is_ok()
+    }
+
     pub fn peek_str(&self, haystack: &str) -> bool {
         self.cursor_start.as_str().starts_with(haystack)
     }

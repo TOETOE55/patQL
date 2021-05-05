@@ -1,9 +1,11 @@
 use crate::parse::*;
 use crate::token::delimiters::Delimiter;
+use crate::token::helper::WhiteSpace;
 use crate::token::keyword::Keyword;
 use crate::token::lit::Lit;
 use crate::token::punctuate::Punct;
 use lens_rs::*;
+use std::marker::PhantomData;
 use unicode_normalization::UnicodeNormalization;
 
 #[derive(Copy, Clone, Eq, PartialEq, Debug, Default)]
@@ -35,7 +37,7 @@ impl Eq for Ident {}
 
 impl Parse<'_> for Ident {
     fn parse(stream: &mut ParseStream) -> Result<Self> {
-        stream.parse::<WhiteSpace>();
+        let _ = stream.parse::<WhiteSpace>();
 
         if stream.peek::<Lit>()
             || stream.peek::<Keyword>()
@@ -61,28 +63,12 @@ impl Parse<'_> for Ident {
             buf += word;
         }
 
-        stream.parse::<WhiteSpace>();
+        let _ = stream.parse::<WhiteSpace>();
 
         Ok(Self {
             span,
             name: buf.nfc().collect(),
         })
-    }
-}
-
-/// zero or more white space
-#[derive(Clone, Debug, Copy)]
-struct WhiteSpace;
-
-impl Parse<'_> for WhiteSpace {
-    fn parse(stream: &mut ParseStream<'_>) -> Result<Self> {
-        while let Some((_, word)) = stream.lookahead_word() {
-            if word.starts_with(char::is_whitespace) {
-                stream.next();
-            }
-        }
-
-        Ok(WhiteSpace)
     }
 }
 
@@ -144,9 +130,9 @@ pub mod lit {
 
     impl Parse<'_> for LitInt {
         fn parse(stream: &mut ParseStream) -> Result<Self> {
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
             let (span, word) = stream.next().ok_or_else(|| anyhow!("expected `int`"))?;
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
             Ok(Self {
                 span,
                 value: word
@@ -158,9 +144,9 @@ pub mod lit {
 
     impl Parse<'_> for LitBool {
         fn parse(stream: &mut ParseStream) -> Result<Self> {
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
             let (span, word) = stream.next().ok_or_else(|| anyhow!("expected `bool`"))?;
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
             Ok(Self {
                 span,
                 value: word
@@ -172,7 +158,7 @@ pub mod lit {
 
     impl Parse<'_> for LitStr {
         fn parse(stream: &mut ParseStream) -> Result<Self> {
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             let (span, quote) = stream.next().ok_or_else(|| anyhow!("expected `string`"))?;
             if quote != "\"" {
@@ -195,7 +181,7 @@ pub mod lit {
                 }
             };
 
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
             Ok(Self {
                 span: Span { end, ..span },
                 value: buf,
@@ -287,9 +273,9 @@ pub mod keyword {
 
     impl Parse<'_> for For {
         fn parse(stream: &mut ParseStream) -> Result<Self> {
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
             let (span, word) = stream.next().ok_or_else(|| anyhow!("expected `iny`"))?;
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             if word == "for" {
                 Ok(Self { span })
@@ -301,9 +287,9 @@ pub mod keyword {
 
     impl Parse<'_> for Any {
         fn parse(stream: &mut ParseStream) -> Result<Self> {
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
             let (span, word) = stream.next().ok_or_else(|| anyhow!("expected `iny`"))?;
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             if word == "any" {
                 Ok(Self { span })
@@ -315,9 +301,9 @@ pub mod keyword {
 
     impl Parse<'_> for All {
         fn parse(stream: &mut ParseStream) -> Result<Self> {
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
             let (span, word) = stream.next().ok_or_else(|| anyhow!("expected `iny`"))?;
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             if word == "all" {
                 Ok(Self { span })
@@ -355,6 +341,7 @@ pub mod keyword {
 
 pub mod punctuate {
     use super::*;
+    use crate::token::helper::WhiteSpace;
     use anyhow::anyhow;
 
     #[derive(Copy, Clone, Eq, PartialEq, Debug, Prism, Review)]
@@ -423,12 +410,12 @@ pub mod punctuate {
 
     impl Parse<'_> for EQ {
         fn parse(stream: &mut ParseStream) -> Result<Self> {
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             let (span, eq1) = stream.next().ok_or_else(|| anyhow!("expected `==`"))?;
             let (Span { end, .. }, eq2) = stream.next().ok_or_else(|| anyhow!("expected `==`"))?;
 
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             if (eq1, eq2) != ("=", "=") {
                 return Err(anyhow!("expected `==` found `{}` in {:?}", eq1, span));
@@ -456,12 +443,12 @@ pub mod punctuate {
 
     impl Parse<'_> for NE {
         fn parse(stream: &mut ParseStream) -> Result<Self> {
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             let (span, bang) = stream.next().ok_or_else(|| anyhow!("expected `==`"))?;
             let (Span { end, .. }, eq) = stream.next().ok_or_else(|| anyhow!("expected `==`"))?;
 
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             if (bang, eq) != ("!", "=") {
                 return Err(anyhow!("expected `==` found `{}` in {:?}", bang, span));
@@ -489,12 +476,12 @@ pub mod punctuate {
 
     impl Parse<'_> for GE {
         fn parse(stream: &mut ParseStream) -> Result<Self> {
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             let (span, gt) = stream.next().ok_or_else(|| anyhow!("expected `>=`"))?;
             let (Span { end, .. }, eq) = stream.next().ok_or_else(|| anyhow!("expected `>=`"))?;
 
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             if (gt, eq) != (">", "=") {
                 return Err(anyhow!("expected `>=` found `{}` in {:?}", gt, span));
@@ -522,11 +509,11 @@ pub mod punctuate {
 
     impl Parse<'_> for GT {
         fn parse(stream: &mut ParseStream) -> Result<Self> {
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             let (span, gt) = stream.next().ok_or_else(|| anyhow!("expected `>`"))?;
 
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             if gt != ">" {
                 return Err(anyhow!("expected `>` found `{}` in {:?}", gt, span));
@@ -552,11 +539,11 @@ pub mod punctuate {
 
     impl Parse<'_> for LT {
         fn parse(stream: &mut ParseStream) -> Result<Self> {
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             let (span, lt) = stream.next().ok_or_else(|| anyhow!("expected `<`"))?;
 
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             if lt != "<" {
                 return Err(anyhow!("expected `<` found `{}` in {:?}", lt, span));
@@ -582,12 +569,12 @@ pub mod punctuate {
 
     impl Parse<'_> for LE {
         fn parse(stream: &mut ParseStream) -> Result<Self> {
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             let (span, lt) = stream.next().ok_or_else(|| anyhow!("expected `<=`"))?;
             let (Span { end, .. }, eq) = stream.next().ok_or_else(|| anyhow!("expected `<=`"))?;
 
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             if (lt, eq) != ("<", "=") {
                 return Err(anyhow!("expected `<=` found `{}` in {:?}", lt, span));
@@ -615,11 +602,11 @@ pub mod punctuate {
 
     impl Parse<'_> for Add {
         fn parse(stream: &mut ParseStream) -> Result<Self> {
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             let (span, add) = stream.next().ok_or_else(|| anyhow!("expected `+`"))?;
 
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             if add != "+" {
                 return Err(anyhow!("expected `+` found `{}` in {:?}", add, span));
@@ -645,11 +632,11 @@ pub mod punctuate {
 
     impl Parse<'_> for Sub {
         fn parse(stream: &mut ParseStream) -> Result<Self> {
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             let (span, sub) = stream.next().ok_or_else(|| anyhow!("expected `-`"))?;
 
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             if sub != "-" {
                 return Err(anyhow!("expected `-` found `{}` in {:?}", sub, span));
@@ -675,11 +662,11 @@ pub mod punctuate {
 
     impl Parse<'_> for Mul {
         fn parse(stream: &mut ParseStream) -> Result<Self> {
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             let (span, mul) = stream.next().ok_or_else(|| anyhow!("expected `*`"))?;
 
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             if mul != "*" {
                 return Err(anyhow!("expected `*` found `{}` in {:?}", mul, span));
@@ -705,11 +692,11 @@ pub mod punctuate {
 
     impl Parse<'_> for Div {
         fn parse(stream: &mut ParseStream) -> Result<Self> {
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             let (span, div) = stream.next().ok_or_else(|| anyhow!("expected `/`"))?;
 
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             if div != "/" {
                 return Err(anyhow!("expected `/` found `{}` in {:?}", div, span));
@@ -735,11 +722,11 @@ pub mod punctuate {
 
     impl Parse<'_> for Rem {
         fn parse(stream: &mut ParseStream) -> Result<Self> {
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             let (span, div) = stream.next().ok_or_else(|| anyhow!("expected `%`"))?;
 
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             if div != "%" {
                 return Err(anyhow!("expected `%` found `{}` in {:?}", div, span));
@@ -765,12 +752,12 @@ pub mod punctuate {
 
     impl Parse<'_> for And {
         fn parse(stream: &mut ParseStream) -> Result<Self> {
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             let (span, bit_and1) = stream.next().ok_or_else(|| anyhow!("expected `&&`"))?;
             let (Span { end, .. }, bit_and2) = stream.next().ok_or(anyhow!("expected `&&`"))?;
 
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             if (bit_and1, bit_and2) != ("&", "&") {
                 return Err(anyhow!("expected `&&` found `{}` in {:?}", bit_and1, span));
@@ -798,13 +785,13 @@ pub mod punctuate {
 
     impl Parse<'_> for Or {
         fn parse(stream: &mut ParseStream) -> Result<Self> {
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             let (span, bit_or1) = stream.next().ok_or_else(|| anyhow!("expected `||`"))?;
             let (Span { end, .. }, bit_or2) =
                 stream.next().ok_or_else(|| anyhow!("expected `||`"))?;
 
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             if (bit_or1, bit_or2) != ("|", "|") {
                 return Err(anyhow!("expected `||` found `{}` in {:?}", bit_or1, span));
@@ -832,12 +819,12 @@ pub mod punctuate {
 
     impl Parse<'_> for Append {
         fn parse(stream: &mut ParseStream) -> Result<Self> {
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             let (span, add1) = stream.next().ok_or_else(|| anyhow!("expected `++`"))?;
             let (Span { end, .. }, add2) = stream.next().ok_or_else(|| anyhow!("expected `++`"))?;
 
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             if (add1, add2) != ("+", "+") {
                 return Err(anyhow!("expected `++` found `{}` in {:?}", add1, span));
@@ -865,7 +852,7 @@ pub mod punctuate {
 
     impl Parse<'_> for Bang {
         fn parse(stream: &mut ParseStream) -> Result<Self> {
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             let (span, bang) = stream.next().ok_or_else(|| anyhow!("expected `!`"))?;
             if bang != "%" {
@@ -892,11 +879,11 @@ pub mod punctuate {
 
     impl Parse<'_> for Underscore {
         fn parse(stream: &mut ParseStream) -> Result<Self> {
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             let (span, underscore) = stream.next().ok_or_else(|| anyhow!("expected `_`"))?;
 
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             if underscore != "_" {
                 return Err(anyhow!("expected `_` found `{}` in {:?}", underscore, span));
@@ -922,11 +909,11 @@ pub mod punctuate {
 
     impl Parse<'_> for Colon {
         fn parse(stream: &mut ParseStream) -> Result<Self> {
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             let (span, colon) = stream.next().ok_or_else(|| anyhow!("expected `:`"))?;
 
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             if colon != ":" {
                 return Err(anyhow!("expected `:` found `{}` in {:?}", colon, span));
@@ -952,11 +939,11 @@ pub mod punctuate {
 
     impl Parse<'_> for Semi {
         fn parse(stream: &mut ParseStream) -> Result<Self> {
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             let (span, semi) = stream.next().ok_or_else(|| anyhow!("expected `;`"))?;
 
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             if semi != ";" {
                 return Err(anyhow!("expected `;` found `{}` in {:?}", semi, span));
@@ -982,11 +969,11 @@ pub mod punctuate {
 
     impl Parse<'_> for Comma {
         fn parse(stream: &mut ParseStream) -> Result<Self> {
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             let (span, comma) = stream.next().ok_or_else(|| anyhow!("expected `,`"))?;
 
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             if comma != "," {
                 return Err(anyhow!("expected `,` found `{}` in {:?}", comma, span));
@@ -1012,11 +999,11 @@ pub mod punctuate {
 
     impl Parse<'_> for Dot {
         fn parse(stream: &mut ParseStream) -> Result<Self> {
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             let (span, dot) = stream.next().ok_or_else(|| anyhow!("expected `.`"))?;
 
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             if dot != "." {
                 return Err(anyhow!("expected `.` found `{}` in {:?}", dot, span));
@@ -1042,12 +1029,12 @@ pub mod punctuate {
 
     impl Parse<'_> for Dot2 {
         fn parse(stream: &mut ParseStream) -> Result<Self> {
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             let (span, dot1) = stream.next().ok_or_else(|| anyhow!("expected `..`"))?;
             let (Span { end, .. }, dot2) = stream.next().ok_or_else(|| anyhow!("expected `..`"))?;
 
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             if (dot1, dot2) != (".", ".") {
                 return Err(anyhow!("expected `..` found `{}` in {:?}", dot1, span));
@@ -1075,11 +1062,11 @@ pub mod punctuate {
 
     impl Parse<'_> for At {
         fn parse(stream: &mut ParseStream) -> Result<Self> {
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             let (span, at) = stream.next().ok_or_else(|| anyhow!("expected `@`"))?;
 
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             if at != "." {
                 return Err(anyhow!("expected `@` found `{}` in {:?}", at, span));
@@ -1105,12 +1092,12 @@ pub mod punctuate {
 
     impl Parse<'_> for LArrow {
         fn parse(stream: &mut ParseStream) -> Result<Self> {
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             let (span, lt) = stream.next().ok_or_else(|| anyhow!("expected `<-`"))?;
             let (Span { end, .. }, sub) = stream.next().ok_or_else(|| anyhow!("expected `<-`"))?;
 
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             if (lt, sub) != ("<", "-") {
                 return Err(anyhow!("expected `<-` found `{}` in {:?}", lt, span));
@@ -1224,7 +1211,7 @@ pub mod delimiters {
 
     impl<'a> Parse<'a> for Paren<'a> {
         fn parse(stream: &mut ParseStream<'a>) -> Result<Self> {
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             let (start_span, lp) = stream.next().ok_or_else(|| anyhow!("expected `(`"))?;
             if lp != "(" {
@@ -1235,7 +1222,7 @@ pub mod delimiters {
 
             let end_span = loop {
                 if let Ok(_) = stream.lookahead::<TokenTree>() {
-                    stream.parse::<TokenTree>()?;
+                    let _ = stream.parse::<TokenTree>()?;
                 } else {
                     let (span, rp) = stream.next().ok_or_else(|| anyhow!("expected `)`"))?;
                     if rp != "(" {
@@ -1245,7 +1232,7 @@ pub mod delimiters {
                 }
             };
 
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             sub_stream.range.start = start_span.end.idx;
             sub_stream.range.end = end_span.start.idx;
@@ -1275,7 +1262,7 @@ pub mod delimiters {
 
     impl<'a> Parse<'a> for Bracket<'a> {
         fn parse(stream: &mut ParseStream<'a>) -> Result<Self> {
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             let (start_span, lb) = stream.next().ok_or_else(|| anyhow!("expected `[`"))?;
             if lb != "[" {
@@ -1286,7 +1273,7 @@ pub mod delimiters {
 
             let end_span = loop {
                 if let Ok(_) = stream.lookahead::<TokenTree>() {
-                    stream.parse::<TokenTree>()?;
+                    let _ = stream.parse::<TokenTree>()?;
                 } else {
                     let (span, rb) = stream.next().ok_or_else(|| anyhow!("expected `]`"))?;
                     if rb != "(" {
@@ -1296,7 +1283,7 @@ pub mod delimiters {
                 }
             };
 
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             sub_stream.range.start = start_span.end.idx;
             sub_stream.range.end = end_span.start.idx;
@@ -1332,7 +1319,7 @@ pub mod delimiters {
 
     impl<'a> Parse<'a> for Brace<'a> {
         fn parse(stream: &mut ParseStream<'a>) -> Result<Self> {
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             let (start_span, lb) = stream.next().ok_or_else(|| anyhow!("expected `{{`"))?;
             if lb != "{" {
@@ -1343,7 +1330,7 @@ pub mod delimiters {
 
             let end_span = loop {
                 if let Ok(_) = stream.lookahead::<TokenTree>() {
-                    stream.parse::<TokenTree>()?;
+                    let _ = stream.parse::<TokenTree>()?;
                 } else {
                     let (span, rb) = stream.next().ok_or_else(|| anyhow!("expected `}}`"))?;
                     if rb != "{" {
@@ -1353,7 +1340,7 @@ pub mod delimiters {
                 }
             };
 
-            stream.parse::<WhiteSpace>();
+            let _ = stream.parse::<WhiteSpace>();
 
             sub_stream.range.start = start_span.end.idx;
             sub_stream.range.end = end_span.start.idx;
@@ -1399,18 +1386,18 @@ pub mod delimiters {
                         }
 
                         if tok.span().start.col == align {
-                            sub_stream.range.start = sub_span.start.idx;
-                            sub_stream.range.end = sub_span.end.idx;
-                            sub_streams.push(sub_stream);
-                            continue 'outer;
+                            break 'inner;
                         }
 
-                        stream.parse::<TokenTree>();
+                        let _ = stream.parse::<TokenTree>();
                         sub_span.end = tok.span().end;
                     } else {
                         break 'outer;
                     }
                 }
+                sub_stream.range.start = sub_span.start.idx;
+                sub_stream.range.end = sub_span.end.idx;
+                sub_streams.push(sub_stream);
                 align_span.end = sub_span.end;
             }
 
@@ -1441,7 +1428,7 @@ pub mod delimiters {
     }
 
     impl<'a> Parse<'a> for Delimiter<'a> {
-        fn parse(stream: &mut ParseStream) -> Result<Self> {
+        fn parse(stream: &mut ParseStream<'a>) -> Result<Self> {
             if stream.peek::<Paren>() {
                 Ok(Self::Paren(stream.parse()?))
             } else if stream.peek::<Bracket>() {
@@ -1472,7 +1459,7 @@ pub enum TokenTree<'a> {
 }
 
 impl<'a> TokenTree<'a> {
-    fn span(&self) -> Span {
+    pub fn span(&self) -> Span {
         match self {
             TokenTree::Ident(Ident { span, .. }) => *span,
             TokenTree::Keyword(keyword) => keyword.span(),
@@ -1484,7 +1471,7 @@ impl<'a> TokenTree<'a> {
 }
 
 impl<'a> Parse<'a> for TokenTree<'a> {
-    fn parse(stream: &mut ParseStream) -> Result<Self> {
+    fn parse(stream: &mut ParseStream<'a>) -> Result<Self> {
         if stream.peek::<Ident>() {
             Ok(Self::Ident(stream.parse()?))
         } else if stream.peek::<Keyword>() {
@@ -1496,8 +1483,70 @@ impl<'a> Parse<'a> for TokenTree<'a> {
         } else if stream.peek::<Delimiter>() {
             Ok(Self::Group(stream.parse()?))
         } else {
-            let (span, word) = stream.next().ok_or_else(|| anyhow!("expected keyword"))?;
-            Err(anyhow!("unexpected token `{}` in {:?}", word, span))
+            let (span, word) = stream
+                .next()
+                .ok_or_else(|| anyhow::anyhow!("expected keyword"))?;
+            Err(anyhow::anyhow!("unexpected token `{}` in {:?}", word, span))
+        }
+    }
+}
+
+pub mod helper {
+    use super::*;
+    /// zero or more white space
+    #[derive(Clone, Debug, Copy)]
+    pub struct WhiteSpace;
+
+    impl Parse<'_> for WhiteSpace {
+        fn parse(stream: &mut ParseStream<'_>) -> Result<Self> {
+            while let Some((_, word)) = stream.lookahead_word() {
+                if word.starts_with(char::is_whitespace) {
+                    stream.next();
+                }
+            }
+
+            Ok(WhiteSpace)
+        }
+    }
+
+    pub struct Punctuated<T, P> {
+        pub items: Vec<T>,
+        _marker: PhantomData<Vec<(T, P)>>,
+    }
+
+    impl<T: Clone, P> Clone for Punctuated<T, P> {
+        fn clone(&self) -> Self {
+            Self {
+                items: self.items.clone(),
+                _marker: Default::default(),
+            }
+        }
+    }
+
+    impl<'a, T: Parse<'a>, P: Parse<'a>> Parse<'a> for Punctuated<T, P> {
+        fn parse(stream: &mut ParseStream<'a>) -> Result<Self> {
+            let mut items = vec![];
+            if stream.peek::<P>() {
+                stream.parse::<P>()?;
+                return Ok(Self {
+                    items,
+                    _marker: Default::default(),
+                });
+            }
+
+            while stream.peek2::<T, P>() {
+                items.push(stream.parse::<T>()?);
+                stream.parse::<P>()?;
+            }
+
+            if stream.peek::<T>() {
+                items.push(stream.parse::<T>()?);
+            }
+
+            Ok(Self {
+                items,
+                _marker: Default::default(),
+            })
         }
     }
 }

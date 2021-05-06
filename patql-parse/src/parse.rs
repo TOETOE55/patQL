@@ -22,12 +22,11 @@ impl<'a> ParseStream<'a> {
     pub fn new(source: &'a str) -> Self {
         let cursor_start = source.split_word_bound_indices();
         let mut cursor_end = cursor_start.clone();
-        let span = if let Some((idx, word)) = cursor_end.next() {
+        let span = if let Some((idx, _)) = cursor_end.next() {
             Span {
                 end: Pos {
-                    row: 0,
-                    col: word.width(),
                     idx,
+                    ..Pos::default()
                 },
                 ..Span::default()
             }
@@ -42,6 +41,10 @@ impl<'a> ParseStream<'a> {
 
             range: 0..source.len(),
         }
+    }
+
+    pub fn as_str(&self) -> &'a str {
+        self.cursor_start.as_str()
     }
 }
 
@@ -77,13 +80,18 @@ impl<'a> Iterator for ParseStream<'a> {
     type Item = (Span, &'a str);
 
     fn next(&mut self) -> Option<Self::Item> {
-        let (start, word) = self.cursor_start.next()?;
-        let (end, _) = self.cursor_end.next()?;
-        if end >= self.range.end {
-            return None;
+        let (start, word) = self
+            .cursor_start
+            .next()
+            .filter(|(start, _)| *start < self.range.end)?;
+
+        if let Some((end, _)) = self.cursor_end.next() {
+            self.word_span.end.idx = end;
+        } else {
+            self.word_span.end.idx = self.range.end;
         }
+
         self.word_span.start.idx = start;
-        self.word_span.end.idx = end;
         self.word_span.start.col = self.word_span.end.col;
         self.word_span.start.row = self.word_span.end.row;
         self.word_span.end.col = match word {

@@ -1,11 +1,11 @@
-use crate::ast::Pat::Expr;
 use crate::parse::{Parse, ParseStream, Result};
-use crate::token::delimiters::{Align, Bracket, Paren};
-use crate::token::helper::Punctuated;
+use crate::token::group::{Brace, Bracket, Paren};
+use crate::token::helper::{LBrace, LBracket, LParen, Punctuated, WhiteSpace};
 use crate::token::keyword::{All, Any, For};
 use crate::token::lit::Lit;
 
-use crate::token::punctuate::{Add, At, Bang, Comma, Dot, Dot2, Punct, Sub, Underscore};
+use crate::token::layout::Align;
+use crate::token::punctuate::{Add, At, Bang, Comma, Dot, Dot2, LArrow, Punct, Sub, Underscore};
 use crate::token::{Ident, TokenTree};
 use lens_rs::*;
 use std::result::Result::Ok;
@@ -27,7 +27,7 @@ pub enum Pat {
     // [x, 1, "abc"], [1, x @ .., "abc"]...
     #[optic]
     Arr(ArrPat),
-    // x + 1...
+    // {x + 1}...
     #[optic]
     Expr(ExprPat),
 }
@@ -49,6 +49,9 @@ pub struct ArrPat {
 
 #[derive(Clone, PartialEq, Eq, Debug, Prism, Review)]
 pub enum ExprPat {
+    #[optic]
+    Pure(Box<Pat>),
+
     #[optic]
     EQ((Box<Pat>, Box<Pat>)),
     #[optic]
@@ -134,6 +137,8 @@ pub enum BuiltinPredicate {
     // 1 == 2, [1, "abc"] == [1, "abc"]
     #[optic]
     EQ((Pat, Pat)),
+    #[optic]
+    NE((Pat, Pat)),
     // 1 > 0
     #[optic]
     GT((Pat, Pat)),
@@ -194,14 +199,15 @@ impl Parse<'_> for Pat {
         } else if stream.peek::<IdentPat>() {
             Pat::Ident(stream.parse()?)
         } else if stream.peek::<Dot2>() {
+            stream.parse::<Dot2>();
             Pat::Ellipse
         } else if stream.peek::<Underscore>() {
+            stream.parse::<Underscore>();
             Pat::Wild
-        } else if stream.peek::<ArrPat>() {
-            Pat::Arr(stream.parse::<ArrPat>()?)
+        } else if stream.peek::<LBrace>() {
+            Pat::Expr(stream.parse()?)
         } else {
-            let lhs = parse_unary(stream)?;
-            Pat::Expr(parse_ambiguous(stream, lhs)?)
+            Pat::Arr(stream.parse::<ArrPat>()?)
         })
     }
 }
@@ -216,6 +222,7 @@ impl Parse<'_> for IdentPat {
     fn parse(stream: &mut ParseStream<'_>) -> Result<Self> {
         let ident = stream.parse()?;
         let sub_pat = if stream.peek::<At>() {
+            stream.parse::<At>()?;
             Some(Box::new(stream.parse()?))
         } else {
             None
@@ -241,7 +248,7 @@ impl Parse<'_> for ArrPat {
     }
 }
 
-fn parse_unary(stream: &mut ParseStream) -> Result<Pat> {
+pub fn parse_unary(stream: &mut ParseStream) -> Result<Pat> {
     let pat = if stream.peek::<Sub>() {
         stream.parse::<Sub>()?;
         Pat::Expr(ExprPat::Neg(Box::new(stream.parse()?)))
@@ -302,7 +309,11 @@ fn parse_unary(stream: &mut ParseStream) -> Result<Pat> {
 }
 
 fn parse_ambiguous(stream: &mut ParseStream, lhs: Pat) -> Result<ExprPat> {
-    let bi_op = stream.parse::<Punct>()?;
+    let bi_op = if let Ok(op) = stream.parse::<Punct>() {
+        op
+    } else {
+        return Ok(ExprPat::Pure(Box::new(lhs)));
+    };
     let rhs = stream.parse::<Pat>()?;
 
     let cons = match bi_op {
@@ -330,6 +341,22 @@ fn parse_ambiguous(stream: &mut ParseStream, lhs: Pat) -> Result<ExprPat> {
     };
 
     Ok(cons((Box::new(lhs), Box::new(rhs))))
+}
+
+impl Parse<'_> for ExprPat {
+    fn parse(stream: &mut ParseStream<'_>) -> Result<Self> {
+        let mut sub_stream = stream.parse::<Brace>()?.sub_stream;
+        let lhs = parse_unary(&mut sub_stream)?;
+        let expr = parse_ambiguous(&mut sub_stream, lhs)?;
+        if let Some((span, word)) = sub_stream.next() {
+            return Err(anyhow::anyhow!(
+                "expected terminated found {} in {:?}",
+                word,
+                span
+            ));
+        }
+        Ok(expr)
+    }
 }
 
 impl Parse<'_> for Rule {
@@ -362,7 +389,7 @@ fn parse_align_or_punctuated(stream: &mut ParseStream<'_>) -> Result<Vec<Predica
 
 impl Parse<'_> for Predicate {
     fn parse(stream: &mut ParseStream<'_>) -> Result<Self> {
-        let p = if stream.peek::<Paren>() {
+        let p = if stream.peek::<LParen>() {
             let mut sub_stream = stream.parse::<Paren>()?.sub_stream;
             if sub_stream.peek::<TokenTree>() {
                 sub_stream.parse()?
@@ -380,6 +407,8 @@ impl Parse<'_> for Predicate {
             Predicate::All(parse_align_or_punctuated(stream)?)
         } else if stream.peek::<For>() {
             Predicate::Forall(stream.parse::<ForallPredicate>()?)
+        } else if stream.peek::<BuiltinPredicate>() {
+            Predicate::Builtin(stream.parse()?)
         } else {
             Predicate::Simple(stream.parse()?)
         };
@@ -405,12 +434,44 @@ impl Parse<'_> for ForallPredicate {
     }
 }
 
+impl Parse<'_> for BuiltinPredicate {
+    fn parse(stream: &mut ParseStream<'_>) -> Result<Self> {
+        if let Ok(id) = stream.lookahead::<Ident>() {
+            if id.name == "println" {
+                stream.parse::<Ident>()?;
+                return Ok(BuiltinPredicate::Println(stream.parse()?));
+            }
+        }
+
+        let lhs = stream.parse()?;
+        let bi_op = stream.parse()?;
+        let rhs = stream.parse()?;
+
+        let cons = match bi_op {
+            Punct::EQ(_) => BuiltinPredicate::EQ,
+            Punct::NE(_) => BuiltinPredicate::NE,
+            Punct::GT(_) => BuiltinPredicate::GT,
+            Punct::GE(_) => BuiltinPredicate::GE,
+            Punct::LT(_) => BuiltinPredicate::LT,
+            Punct::LE(_) => BuiltinPredicate::LE,
+            p => {
+                return Err(anyhow::anyhow!(
+                    "expected binary op found {:?} in {:?}",
+                    p,
+                    p.span()
+                ))
+            }
+        };
+        Ok(cons((lhs, rhs)))
+    }
+}
+
 impl Parse<'_> for Decl {
     fn parse(stream: &mut ParseStream<'_>) -> Result<Self> {
-        Ok(Self {
-            rule: stream.parse()?,
-            pred: stream.parse()?,
-        })
+        let rule = stream.parse()?;
+        stream.parse::<LArrow>()?;
+        let pred = stream.parse()?;
+        Ok(Self { rule, pred })
     }
 }
 
@@ -420,7 +481,14 @@ impl Parse<'_> for File {
 
         let mut decls = vec![];
         for mut sub_stream in align.sub_streams {
-            decls.push(sub_stream.parse()?)
+            decls.push(sub_stream.parse()?);
+            if let Ok(tok) = sub_stream.parse::<TokenTree>() {
+                return Err(anyhow::anyhow!("expected decl found {:?}", tok));
+            }
+        }
+
+        if let Ok(tok) = stream.parse::<TokenTree>() {
+            return Err(anyhow::anyhow!("expected terminated found {:?}", tok));
         }
 
         Ok(Self { decls })

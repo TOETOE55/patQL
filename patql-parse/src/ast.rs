@@ -1,14 +1,13 @@
 use crate::parse::{Parse, ParseStream, Result};
-use crate::token::group::{Brace, Bracket, Paren};
-use crate::token::helper::{LBrace, LBracket, LParen, Punctuated, WhiteSpace};
+use crate::token::helper::{LBrace, LBracket, LParen, Punctuated};
 use crate::token::keyword::{All, Any, For};
 use crate::token::lit::Lit;
 
+use crate::token::group::{Brace, Bracket, Paren};
 use crate::token::layout::Align;
 use crate::token::punctuate::{Add, At, Bang, Comma, Dot, Dot2, LArrow, Punct, Sub, Underscore};
 use crate::token::{Ident, TokenTree};
 use lens_rs::*;
-use std::result::Result::Ok;
 
 #[derive(Clone, PartialEq, Eq, Debug, Prism, Review)]
 pub enum Pat {
@@ -42,8 +41,9 @@ pub struct IdentPat {
     pub sub_pat: Option<Box<Pat>>,
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, Lens)]
 pub struct ArrPat {
+    #[optic]
     pub items: Vec<Pat>,
 }
 
@@ -95,9 +95,10 @@ pub enum ExprPat {
 }
 
 // P 1
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, Lens)]
 pub struct Rule {
     pub name: Ident,
+    #[optic]
     pub args: Pat,
 }
 
@@ -126,9 +127,10 @@ pub enum Predicate {
     Builtin(BuiltinPredicate),
 }
 
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, Lens)]
 pub struct ForallPredicate {
     pub params: Vec<Ident>,
+    #[optic]
     pub predicate: Box<Predicate>,
 }
 
@@ -155,15 +157,18 @@ pub enum BuiltinPredicate {
 }
 
 // P x <- any (all R x), Q x
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, Lens)]
 pub struct Decl {
+    #[optic]
     pub rule: Rule,
-    pub pred: Predicate,
+    #[optic]
+    pub predicate: Predicate,
 }
 
 // P x <- any Q x, R x
-#[derive(Clone, PartialEq, Eq, Debug)]
+#[derive(Clone, PartialEq, Eq, Debug, Lens)]
 pub struct File {
+    #[optic]
     pub decls: Vec<Decl>,
 }
 
@@ -199,10 +204,10 @@ impl Parse<'_> for Pat {
         } else if stream.peek::<IdentPat>() {
             Pat::Ident(stream.parse()?)
         } else if stream.peek::<Dot2>() {
-            stream.parse::<Dot2>();
+            stream.parse::<Dot2>()?;
             Pat::Ellipse
         } else if stream.peek::<Underscore>() {
-            stream.parse::<Underscore>();
+            stream.parse::<Underscore>()?;
             Pat::Wild
         } else if stream.peek::<LBrace>() {
             Pat::Expr(stream.parse()?)
@@ -273,11 +278,11 @@ pub fn parse_unary(stream: &mut ParseStream) -> Result<Pat> {
     } else if stream.peek::<Underscore>() {
         stream.parse::<Underscore>()?;
         Pat::Wild
-    } else if stream.peek::<ArrPat>() {
+    } else if stream.peek::<LBracket>() {
         Pat::Arr(stream.parse::<ArrPat>()?)
     } else {
         let mut sub_stream = stream.parse::<Paren>()?.sub_stream;
-        let inner_pat = stream.parse::<Pat>()?;
+        let inner_pat = sub_stream.parse::<Pat>()?;
         if let Some((span, word)) = sub_stream.next() {
             return Err(anyhow::anyhow!(
                 "expected terminated found {} in {:?}",
@@ -289,9 +294,9 @@ pub fn parse_unary(stream: &mut ParseStream) -> Result<Pat> {
         }
     };
 
-    let pat = if stream.peek::<Bracket>() {
+    let pat = if stream.peek::<LBracket>() {
         let mut sub_stream = stream.parse::<Bracket>()?.sub_stream;
-        let inner_pat = stream.parse::<Pat>()?;
+        let inner_pat = sub_stream.parse::<Pat>()?;
         if let Some((span, word)) = sub_stream.next() {
             return Err(anyhow::anyhow!(
                 "expected terminated found {} in {:?}",
@@ -471,7 +476,10 @@ impl Parse<'_> for Decl {
         let rule = stream.parse()?;
         stream.parse::<LArrow>()?;
         let pred = stream.parse()?;
-        Ok(Self { rule, pred })
+        Ok(Self {
+            rule,
+            predicate: pred,
+        })
     }
 }
 

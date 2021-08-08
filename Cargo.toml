@@ -1,22 +1,22 @@
-#[package]
-#name = "pat_ql"
-#version = "0.1.0"
-#authors = ["Xyzt Toe <584605539@qq.com>"]
-#edition = "2018"
-#
-## See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
-#
-#[dependencies]
-#uuid = { version = "0.8", features = ["v4"] }
-#bumpalo = "3.4.0"
-#psc = { git = "https://github.com/TOETOE55/psc.git" }
-#structopt = "0.3.11"
+[package]
+name = "pat_ql"
+version = "0.1.0"
+authors = ["Xyzt Toe <584605539@qq.com>"]
+edition = "2018"
 
-[workspace]
-members = [
-    "patql-engine",
-    "patql-ir",
-    "patql-parse",
-    "patql-repl",
-    "patql-test"
-]
+# See more keys and their definitions at https://doc.rust-lang.org/cargo/reference/manifest.html
+
+[dependencies]
+uuid = { version = "0.8", features = ["v4"] }
+bumpalo = "3.4.0"
+psc = { git = "https://github.com/TOETOE55/psc.git" }
+structopt = "0.3.11"
+
+#[workspace]
+#members = [
+#    "patql-engine",
+#    "patql-ir",
+#    "patql-parse",
+#    "patql-repl",
+#    "patql-test"
+#]

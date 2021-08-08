@@ -8,9 +8,7 @@ edition = "2018"
 
 [dependencies]
 regex = "1.4"
-pest = "2.1"
-pest_derive = "2.1"
-lens-rs = "0.3"
+lens-rs = "0.3.2"
 unicode-width = "0.1"
 unicode-segmentation = "1.7"
 unicode-normalization = "0.1"
